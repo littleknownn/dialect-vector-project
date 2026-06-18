@@ -1,0 +1,15 @@
+# venv
+.venv/
+
+# Python
+__pycache__/
+*.pyc
+
+# Metadata
+.ipynb_checkpoints/
+.DS_Store
+.vscode/
+
+# Project
+scratch/
+data/
