@@ -9,6 +9,7 @@ __pycache__/
 .ipynb_checkpoints/
 .DS_Store
 .vscode/
+*.egg-info/
 
 # Project
 scratch/
