@@ -1,5 +1,6 @@
-from pathlib import Path
 from src.utils import raw_data_dir, processed_data_dir
+from src.config import ExperimentConfig, experiment_config
+from pathlib import Path
 import json
 import re
 from tqdm import tqdm
@@ -27,6 +28,7 @@ class CoraalConfig(DatasetConfig):
     text_col_idx: int
     speaker_col_idx: int
     interviewer_marker: str
+    out_filename: str
 
 
 @dataclass
@@ -117,53 +119,18 @@ def _process_coraal_lines(lines: List[str], config: CoraalConfig) -> List[str]:
     return utterances
 
 
-def process_coraal_dataset(config: CoraalConfig) -> None:
-    coraal_dir = Path(processed_data_dir / 'CORAAL')
-    for city_dir in config.in_dir.iterdir():
+def process_coraal_dataset(experiment_config: ExperimentConfig, config: CoraalConfig) -> None:
+    cleaned_lines = []
+    for city_dir in tqdm(config.in_dir.iterdir(), desc=f'Processing CORAAL Data'):
         if not city_dir.is_dir():
             continue
-        city = city_dir.name
-        city_text = []
-
-        for text_path in tqdm(list(city_dir.glob('*.txt')), desc=f'Processing CORAAL {city} Data'):
-            with open(text_path, 'r', encoding='utf-8') as text_file:
+        for text_path in list(city_dir.glob('*.txt')):
+            if text_path.name.startswith('._'):
+                continue
+            with open(text_path, 'r', encoding='utf-8', errors='ignore') as text_file:
                 lines = text_file.readlines()
                 lines = lines[1:] if config.header else lines
-                city_text += _process_coraal_lines(lines, config)
-
-        if city_text:
-            save_jsonl(
-                city_text,
-                coraal_dir,
-                f'coraal_{city}_clean',
-                config.min_len_chars,
-                config.min_len_words
-            )
-
-
-def process_hf_dataset(config: HFDatasetConfig) -> None:
-    dataset = load_dataset(config.hf_path, split=config.split)
-    tweets = [clean_row
-              for row in tqdm(dataset, desc='Processing TwitterAAE Data')
-              if (clean_row := clean_text(row[config.text_col], config))]
-    
-    save_jsonl(
-        tweets,
-        processed_data_dir,
-        config.out_filename,
-        config.min_len_chars,
-        config.min_len_words
-    )
-
-
-def process_gh_dataset(config: GithubDatasetConfig) -> None:
-    lyrics = requests.get(config.git_url)
-    lyrics.raise_for_status()
-    lines = lyrics.text.split(config.delimiter)
-    cleaned_lines = [cleaned_line
-                    for line in tqdm(lines, desc='Processing AAVELyrics Data')
-                    if (cleaned_line := clean_text(line, config))]
-    
+                cleaned_lines += _process_coraal_lines(lines, config)
     save_jsonl(
         cleaned_lines,
         processed_data_dir,
@@ -173,85 +140,112 @@ def process_gh_dataset(config: GithubDatasetConfig) -> None:
     )
 
 
-coraal_config = CoraalConfig(
-    in_dir = raw_data_dir / 'coraal',
-    header = True,
-    delimiter = '\t',
-    text_col_idx = 3,
-    speaker_col_idx = 1,
-    interviewer_marker = '_int_',
-
-    min_len_chars = 15,
-    min_len_words = 5,
-
-    skipped_data_patterns = [
-        r'rd-',
-        r'\(pause \d+\.\d+\)',
-        r'inaudible',
-        r'unintelligible',
-        r'\?\?+',
-        r'(^|[\[\]\(\)<>])\s*\?',
-    ],
-    skipped_case_patterns = [
-        r'(|\s)\?(\s|$)',
-        r'-\s*[.,!?]*\s*$',
-        r'\b\w+-\s',
-    ],
-    replacement_patterns = [
-        (r'\([^\)]+\)', ''),
-        (r'<[^>]+>',    ''),
-        (r'[\[\]/]',    ''),
-        (r'\s+',        ' '),
-    ],
-)
+def process_hf_dataset(experiment_config: ExperimentConfig, config: HFDatasetConfig) -> None:
+    dataset = load_dataset(config.hf_path, split=config.split)
+    cleaned_lines = [clean_row
+              for row in tqdm(dataset, desc='Processing TwitterAAE Data')
+              if (clean_row := clean_text(row[config.text_col], config))]
+    save_jsonl(
+        cleaned_lines,
+        processed_data_dir,
+        config.out_filename,
+        config.min_len_chars,
+        config.min_len_words
+    )
 
 
-twitteraae_config = HFDatasetConfig(
-    hf_path = 'lighteval/TwitterAAE',
-    split = 'test',
-    text_col = 'tweet',
-    out_filename = 'TwitterAAE',
-
-    min_len_chars = 15,
-    min_len_words = 5,
-
-    skipped_data_patterns = [],
-    skipped_case_patterns = [],
-    replacement_patterns = [
-        (r'(?:http|www\.)\S+', ''),
-        (r'^RT\s+', ''),
-        (r'&amp;|&lt;|&gt;', ''),
-        (r'@\w+', '<Name>'),
-        (r'\s+', ' '),
-    ],
-)
-
-
-lyrics_config = GithubDatasetConfig(
-    git_url = 'https://raw.githubusercontent.com/jazmiahenry/aave_corpora/refs/heads/main/corpora/lyrics_corpora.txt',
-    delimiter = '\n',
-    out_filename = 'AAVELyrics',
-
-    min_len_chars = 15,
-    min_len_words = 5,
-
-    skipped_data_patterns = [
-        r'(?:^|\blyrics)(?:verse|chorus|intro|outro|hook|bridge|interlude|skit|narrator|scratches|produced|vocals sampled|beat changes)\b',
-        r'\bsample[ds]?$',
-    ],
-    skipped_case_patterns = [
-        r'^[a-z]+$',
-    ],
-    replacement_patterns = [
-        (r'embed$', ''),
-        (r'\s+', ' '),
-    ],
-)
-
+def process_gh_dataset(experiment_config: ExperimentConfig, config: GithubDatasetConfig) -> None:
+    lyrics = requests.get(config.git_url)
+    lyrics.raise_for_status()
+    lines = lyrics.text.split(config.delimiter)
+    cleaned_lines = [cleaned_line
+                    for line in tqdm(lines, desc='Processing AAVELyrics Data')
+                    if (cleaned_line := clean_text(line, config))]
+    save_jsonl(
+        cleaned_lines,
+        processed_data_dir,
+        config.out_filename,
+        config.min_len_chars,
+        config.min_len_words
+    )
 
 if __name__ == '__main__':
+    coraal_config = CoraalConfig(
+        in_dir = raw_data_dir / 'coraal',
+        header = True,
+        delimiter = '\t',
+        text_col_idx = 3,
+        speaker_col_idx = 1,
+        interviewer_marker = '_int_',
+
+        out_filename = 'coraal_merged',
+        min_len_chars = 15,
+        min_len_words = 5,
+
+        skipped_data_patterns = [
+            r'rd-',
+            r'\(pause \d+\.\d+\)',
+            r'inaudible',
+            r'unintelligible',
+            r'\?\?+',
+            r'(^|[\[\]\(\)<>])\s*\?',
+        ],
+        skipped_case_patterns = [
+            r'(|\s)\?(\s|$)',
+            r'-\s*[.,!?]*\s*$',
+            r'\b\w+-\s',
+        ],
+        replacement_patterns = [
+            (r'\([^\)]+\)', ''),
+            (r'<[^>]+>',    ''),
+            (r'[\[\]/]',    ''),
+            (r'\s+',        ' '),
+        ],
+    )
+
+    twitteraae_config = HFDatasetConfig(
+        hf_path = 'lighteval/TwitterAAE',
+        split = 'test',
+        text_col = 'tweet',
+        out_filename = 'twitter_aae',
+
+        min_len_chars = 15,
+        min_len_words = 5,
+
+        skipped_data_patterns = [],
+        skipped_case_patterns = [],
+        replacement_patterns = [
+            (r'(?:http|www\.)\S+', ''),
+            (r'^RT\s+', ''),
+            (r'&amp;|&lt;|&gt;', ''),
+            (r'@\w+', '<Name>'),
+            (r'\s+', ' '),
+        ],
+    )
+
+    lyrics_config = GithubDatasetConfig(
+        git_url = 'https://raw.githubusercontent.com/jazmiahenry/aave_corpora/refs/heads/main/corpora/lyrics_corpora.txt',
+        delimiter = '\n',
+        out_filename = 'aave_lyrics',
+
+        min_len_chars = 15,
+        min_len_words = 5,
+
+        skipped_data_patterns = [
+            r'(?:^|\blyrics)(?:verse|chorus|intro|outro|hook|bridge|interlude|skit|narrator|scratches|produced|vocals sampled|beat changes)\b',
+            r'\bsample[ds]?$',
+        ],
+        skipped_case_patterns = [
+            r'^[a-z]+$',
+        ],
+        replacement_patterns = [
+            (r'embed$', ''),
+            (r'\s+', ' '),
+        ],
+    )
+
     processed_data_dir.mkdir(parents=True, exist_ok=True)
-    process_coraal_dataset(coraal_config)
-    process_hf_dataset(twitteraae_config)
-    process_gh_dataset(lyrics_config)
+    process_coraal_dataset(experiment_config, coraal_config)
+    process_hf_dataset(experiment_config, twitteraae_config)
+    process_gh_dataset(experiment_config, lyrics_config)
     print('Data Processing Complete')
