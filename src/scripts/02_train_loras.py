@@ -1,5 +1,5 @@
 from src.utils import processed_data_dir, models_dir
-from src.config import ExperimentConfig, experiment_config
+from src.config import ExperimentConfig, experiment_config, corpus_config
 import gc
 import torch
 from datasets import load_dataset
@@ -75,7 +75,6 @@ def fit_lora(experiment_config: ExperimentConfig, corpus_name: str) -> None:
 
 if __name__ == '__main__':
     models_dir.mkdir(parents=True, exist_ok=True)
-    fit_lora(experiment_config, 'coraal_merged')
-    fit_lora(experiment_config, 'twitter_aae')
-    fit_lora(experiment_config, 'aave_lyrics')
+    for corpus_name in corpus_config.keys():
+        fit_lora(experiment_config, corpus_name)
     print('LoRA Fitting Complete')
