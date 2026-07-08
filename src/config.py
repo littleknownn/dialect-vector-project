@@ -3,12 +3,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Union
 
+
 @dataclass
 class ExperimentConfig:
     model_hf_path: str
     lora_rank: int
     lora_alpha: int
     target_weight_matrices: Union[list[str], str]
+    aae_vector_source_layer: int
 
     max_training_samples: int
     batch_size: int
@@ -56,6 +58,7 @@ experiment_config = ExperimentConfig(
     lora_rank = 8,
     lora_alpha = 16,
     target_weight_matrices = ['v_proj', 'o_proj'], # ['q_proj', 'v_proj'], 'all-linear'
+    steering_target_layer = 20,
 
     max_training_samples = 5499,
     batch_size = 2,

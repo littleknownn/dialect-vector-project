@@ -1,5 +1,6 @@
-from src.utils import processed_data_dir, models_dir
 from src.config import ExperimentConfig, experiment_config, corpus_config
+from src.utils import processed_data_dir, models_dir, checkpoints_subdir_name
+from pathlib import Path
 import gc
 import torch
 from datasets import load_dataset
@@ -11,9 +12,14 @@ from transformers import (
 from peft import LoraConfig
 from trl import  SFTTrainer, SFTConfig
 
-def fit_lora(experiment_config: ExperimentConfig, corpus_name: str) -> None:
-    output_dir = models_dir / corpus_name
-    corpus_path = processed_data_dir / f'{corpus_name}.jsonl'
+def fit_lora(
+        experiment_config: ExperimentConfig,
+        corpus_name: str,
+        in_dir: Path = processed_data_dir,
+        out_dir: Path = models_dir,
+    ) -> None:
+    output_dir = out_dir / corpus_name
+    corpus_path = in_dir / f'{corpus_name}.jsonl'
 
     corpus = load_dataset('json', data_files=str(corpus_path), split='train')
     num_training_samples = min(experiment_config.max_training_samples, len(corpus))
@@ -46,7 +52,7 @@ def fit_lora(experiment_config: ExperimentConfig, corpus_name: str) -> None:
     )
 
     lora_training_config = SFTConfig(
-        output_dir = str(models_dir / corpus_name / 'checkpoints'),
+        output_dir = str(out_dir / corpus_name / checkpoints_subdir_name),
         per_device_train_batch_size = experiment_config.batch_size,
         learning_rate = experiment_config.learning_rate,
         num_train_epochs = experiment_config.epochs,
@@ -74,7 +80,6 @@ def fit_lora(experiment_config: ExperimentConfig, corpus_name: str) -> None:
     torch.cuda.empty_cache()
 
 if __name__ == '__main__':
-    models_dir.mkdir(parents=True, exist_ok=True)
-    for corpus_name in corpus_config.keys():
+    for corpus_name in corpus_config:
         fit_lora(experiment_config, corpus_name)
     print('LoRA Fitting Complete')

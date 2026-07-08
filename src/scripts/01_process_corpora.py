@@ -1,38 +1,16 @@
-from src.utils import processed_data_dir
 from src.config import (
-    ExperimentConfig,
     DatasetConfig,
     CoraalConfig,
     HFDatasetConfig,
     GithubDatasetConfig,
-    experiment_config,
     corpus_config,
 )
-from pathlib import Path
-import json
+from src.utils import save_jsonl, processed_data_dir
+from datasets import load_dataset
+import requests
 import re
 from tqdm import tqdm
-from datasets import load_dataset
-from typing import Optional, Iterable
-import requests
-
-
-def _save_jsonl(
-        text_iter: Iterable[str],
-        out_dir: Path,
-        out_filename: str,
-        min_len_chars: int,
-        min_len_words: int
-    ) -> None:
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_filename += '.jsonl'
-    out_path = out_dir / out_filename
-    with open(out_path, 'w', encoding='utf-8') as out_file:
-        for text in text_iter:
-            if len(text) < min_len_chars or len(text.split()) < min_len_words:
-                continue
-            json_object = {'text': text}
-            out_file.write(json.dumps(json_object) + '\n')
+from typing import Optional
 
 
 def _clean_text(text: str, config: DatasetConfig) -> Optional[str]:
@@ -90,9 +68,9 @@ def _process_coraal_lines(lines: list[str], config: CoraalConfig) -> list[str]:
     return utterances
 
 
-def process_coraal_dataset(experiment_config: ExperimentConfig, config: CoraalConfig, out_filename: str) -> None:
+def process_coraal_dataset(config: CoraalConfig) -> list[str]:
     cleaned_lines = []
-    for city_dir in tqdm(config.in_dir.iterdir(), desc=f'Processing {out_filename} Data'):
+    for city_dir in tqdm(config.in_dir.iterdir()):
         if not city_dir.is_dir():
             continue
         for text_path in list(city_dir.glob('*.txt')):
@@ -102,53 +80,45 @@ def process_coraal_dataset(experiment_config: ExperimentConfig, config: CoraalCo
                 lines = text_file.readlines()
                 lines = lines[1:] if config.header else lines
                 cleaned_lines += _process_coraal_lines(lines, config)
-    _save_jsonl(
-        cleaned_lines,
-        processed_data_dir,
-        out_filename,
-        config.min_len_chars,
-        config.min_len_words
-    )
+    return cleaned_lines
 
 
-def process_hf_dataset(experiment_config: ExperimentConfig, config: HFDatasetConfig, out_filename: str) -> None:
+def process_hf_dataset(config: HFDatasetConfig) -> list[str]:
     dataset = load_dataset(config.hf_path, split=config.split)
     cleaned_lines = [clean_row
-              for row in tqdm(dataset, desc=f'Processing {out_filename} Data')
+              for row in tqdm(dataset)
               if (clean_row := _clean_text(row[config.text_col], config))]
-    _save_jsonl(
-        cleaned_lines,
-        processed_data_dir,
-        out_filename,
-        config.min_len_chars,
-        config.min_len_words
-    )
+    return cleaned_lines
 
 
-def process_gh_dataset(experiment_config: ExperimentConfig, config: GithubDatasetConfig, out_filename: str) -> None:
+def process_gh_dataset(config: GithubDatasetConfig) -> list[str]:
     lyrics = requests.get(config.git_url)
     lyrics.raise_for_status()
     lines = lyrics.text.split(config.delimiter)
     cleaned_lines = [cleaned_line
-                    for line in tqdm(lines, desc=f'Processing {out_filename} Data')
+                    for line in tqdm(lines)
                     if (cleaned_line := _clean_text(line, config))]
-    _save_jsonl(
-        cleaned_lines,
-        processed_data_dir,
-        out_filename,
-        config.min_len_chars,
-        config.min_len_words
-    )
+    return cleaned_lines
+
 
 if __name__ == '__main__':
-    processed_data_dir.mkdir(parents=True, exist_ok=True)
     for corpus_name, config in corpus_config.items():
+        tqdm.write(f'Processing {corpus_name} Data...')
+
         if isinstance(config, CoraalConfig):
-            process_coraal_dataset(experiment_config, config, corpus_name)
+            cleaned_lines = process_coraal_dataset(config)
 
-        if isinstance(config, HFDatasetConfig):
-            process_hf_dataset(experiment_config, config, corpus_name)
+        elif isinstance(config, HFDatasetConfig):
+            cleaned_lines = process_hf_dataset(config)
 
-        if isinstance(config, GithubDatasetConfig):
-            process_gh_dataset(experiment_config, config, corpus_name)
-    print('Data Processing Complete')
+        elif isinstance(config, GithubDatasetConfig):
+            cleaned_lines = process_gh_dataset(config)
+        
+        save_jsonl(
+            cleaned_lines,
+            processed_data_dir,
+            corpus_name,
+            config.min_len_chars,
+            config.min_len_words
+        )
+    tqdm.write('Data Processing Complete')

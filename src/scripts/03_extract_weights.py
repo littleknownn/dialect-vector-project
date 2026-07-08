@@ -1,12 +1,19 @@
-from src.utils import models_dir
 from src.config import ExperimentConfig, experiment_config, corpus_config
+from src.utils import models_dir, weights_filename
+from pathlib import Path
 from safetensors.torch import load_file
 import torch
 import re
 
 
-def extract_weight_tensors(corpus_name: str, experiment_config: ExperimentConfig) -> dict[int, dict[str, dict[str, torch.Tensor]]]:
-    output_dir = models_dir / corpus_name
+def extract_weight_tensors(
+        corpus_name: str,
+        experiment_config: ExperimentConfig,
+        out_dir: Path = models_dir,
+        out_filename: str = weights_filename,
+    ) -> dict[int, dict[str, dict[str, torch.Tensor]]]:
+    output_dir = out_dir / corpus_name
+    out_filepath = output_dir / f'{out_filename}.pt'
     tensors_filepath = output_dir / 'adapter_model.safetensors'
     tensors_dict = load_file(tensors_filepath)
 
@@ -32,11 +39,10 @@ def extract_weight_tensors(corpus_name: str, experiment_config: ExperimentConfig
         cleaned_tensor = tensor.detach().cpu().float()
         weights[layer_idx][tensor_type][tensor_factor] = cleaned_tensor
 
-    out_filepath = output_dir / 'lora_tensors.pt'
     torch.save(weights, out_filepath)
 
 
 if __name__ == '__main__':
-    for corpus_name in corpus_config.keys():
+    for corpus_name in corpus_config:
         extract_weight_tensors(corpus_name, experiment_config)
     print('Weight Tensor Extraction Complete')
