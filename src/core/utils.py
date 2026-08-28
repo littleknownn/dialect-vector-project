@@ -11,29 +11,26 @@ type MetricsJson = dict[
 ]
 
 
-src_dir = Path(__file__).parent
-root_dir = src_dir.parent
+CORE_DIR = Path(__file__).parent
+SRC_DIR = CORE_DIR.parent
+ROOT_DIR = SRC_DIR.parent
 
-raw_data_dir = root_dir / 'data' / 'raw'
-processed_data_dir = root_dir / 'data' / 'processed'
-processed_data_dir.mkdir(parents=True, exist_ok=True)
+RAW_DATA_DIR = ROOT_DIR / 'data' / 'raw'
+PROCESSED_DATA_DIR = ROOT_DIR / 'data' / 'processed'
+PROCESSED_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-models_dir = root_dir / 'models'
-models_dir.mkdir(parents=True, exist_ok=True)
-weights_filename = 'lora_tensors'
+ACTIVATIONS_DIR = ROOT_DIR / 'activations'
+ACTIVATIONS_DIR.mkdir(parents=True, exist_ok=True)
 
-checkpoints_subdir_name = 'checkpoints'
+ESTIMATORS_DIR = ROOT_DIR / 'estimators'
+ESTIMATORS_DIR.mkdir(parents=True, exist_ok=True)
 
-steering_vectors_dir = models_dir / 'steering_vectors'
-steering_vectors_dir.mkdir(parents=True, exist_ok=True)
-steering_vectors_filename = 'steering_vectors'
+OUTPUTS_DIR = ROOT_DIR / 'outputs'
+OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
 
-outputs_dir = root_dir / 'outputs'
-outputs_dir.mkdir(parents=True, exist_ok=True)
-
-metrics_dir = outputs_dir / 'metrics'
-metrics_dir.mkdir(parents=True, exist_ok=True)
-phase_1_metrics_filename = 'phase_1_metrics'
+METRICS_DIR = OUTPUTS_DIR / 'metrics'
+METRICS_DIR.mkdir(parents=True, exist_ok=True)
+PHASE_1_METRICS_FILENAME = 'phase_1_metrics'
 
 
 def save_jsonl(

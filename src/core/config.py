@@ -1,22 +1,23 @@
-from src.utils import raw_data_dir
+from src.core.utils import RAW_DATA_DIR
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Union
+
+
+MODEL_LAYERS_MAP = {
+    'qwen2': 'model.layers.{}',
+    'llama': 'model.layers.{}',
+}
 
 
 @dataclass
 class ExperimentConfig:
     model_hf_path: str
-    lora_rank: int
-    lora_alpha: int
-    target_weight_matrices: Union[list[str], str]
-    aae_vector_source_layer: int
+    load_in_4bit: bool
+    bnb_4bit_quant_type: str
 
-    max_training_samples: int
+    target_layers: list[int]
     batch_size: int
     max_seq_len: int
-    learning_rate: float
-    epochs: int
     random_seed: int
 
 
@@ -35,9 +36,20 @@ class CoraalConfig(DatasetConfig):
     in_dir: Path
     header: bool
     delimiter: str
+
     text_col_idx: int
     speaker_col_idx: int
     interviewer_marker: str
+
+
+@dataclass
+class RealAAEConfig(DatasetConfig):
+    in_dir: Path
+    header: bool
+    delimiter: str
+
+    aae_col_idx: int
+    sae_col_idx: int
 
 
 @dataclass
@@ -53,25 +65,21 @@ class GithubDatasetConfig(DatasetConfig):
     delimiter: str
 
 
-experiment_config = ExperimentConfig(
-    model_hf_path='Qwen/Qwen2.5-1.5B',
-    lora_rank = 8,
-    lora_alpha = 16,
-    target_weight_matrices = ['v_proj', 'o_proj'], # ['q_proj', 'v_proj'], 'all-linear'
-    steering_target_layer = 20,
+EXPERIMENT_CONFIG = ExperimentConfig(
+    model_hf_path = 'meta-llama/Llama-3.2-3B',
+    load_in_4bit = True,
+    bnb_4bit_quant_type = 'nf4',
 
-    max_training_samples = 5499,
+    target_layers = [20],
     batch_size = 2,
     max_seq_len = 512,
-    learning_rate = 2e-4,
-    epochs = 1,
     random_seed = 42,
 )
 
 
-corpus_config = {
+CORPUS_CONFIG = {
     'coraal_merged': CoraalConfig(
-        in_dir = raw_data_dir / 'coraal',
+        in_dir = RAW_DATA_DIR / 'coraal',
         header = True,
         delimiter = '\t',
         text_col_idx = 3,
@@ -99,6 +107,27 @@ corpus_config = {
             (r'<[^>]+>',    ''),
             (r'[\[\]/]',    ''),
             (r'\s+',        ' '),
+        ],
+    ),
+
+    'real_aae': RealAAEConfig(
+        in_dir = RAW_DATA_DIR / 'real_aae',
+        header = True,
+        delimiter = ',',
+        aae_col_idx = 0,
+        sae_col_idx = 1,
+
+        min_len_chars = 15,
+        min_len_words = 5,
+
+        skipped_data_patterns = [],
+        skipped_case_patterns = [],
+        replacement_patterns = [
+            (r'(?:http|www\.)\S+', ''),
+            (r'^RT\s+', ''),
+            (r'&amp;|&lt;|&gt;', ''),
+            (r'@\w+', '<Name>'),
+            (r'\s+', ' '),
         ],
     ),
 
