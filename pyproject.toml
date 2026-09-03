@@ -13,11 +13,9 @@ dependencies = [
     "jupyter>=1.1.1",
     "matplotlib>=3.11.0",
     "numpy<2",
-    "peft<0.14",
     "stanza>=1.8.2",
     "torch>=2.5,<2.6",
     "transformers>=4.46,<5",
-    "trl>=0.12.2",
     "value-nlp>=0.3",
 ]
 
