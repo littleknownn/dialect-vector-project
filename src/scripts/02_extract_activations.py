@@ -13,13 +13,18 @@ from transformers import (
 
 from src.core.base_model import load_base_model
 from src.core.config import (
+    CORPUS_CONFIG,
     DatasetConfig,
+    EXPERIMENT_CONFIG,
     ExperimentConfig,
     RealAAEConfig,
-    CORPUS_CONFIG,
-    EXPERIMENT_CONFIG
 )
-from src.core.utils import get_activation_filename, ACTIVATIONS_DIR, PROCESSED_DATA_DIR
+from src.core.utils import (
+    ACTIVATIONS_DIR,
+    get_activation_filename,
+    PoolingTypeEnum,
+    PROCESSED_DATA_DIR,
+)
 
 
 class LayerActivationMatrices(NamedTuple):
@@ -42,10 +47,10 @@ def _load_corpus_data(processed_data_dir: Path) -> dict[str, list[str]]:
     corpus_paths_iter = processed_data_dir.glob('*.jsonl')
     corpus_data = {}
     for corpus_path in corpus_paths_iter:
-        corpus_name = corpus_path.stem
+        split_name = corpus_path.stem
         with open(corpus_path, 'r', encoding='utf-8') as corpus_file:
             corpus_lines = [json.loads(line)['text'] for line in corpus_file]
-        corpus_data[corpus_name] = corpus_lines
+        corpus_data[split_name] = corpus_lines
     return corpus_data
 
 
@@ -60,8 +65,8 @@ def _compute_corpus_splits(
     corpus_splits = {}
     permuted_indices_by_dataset = {}
 
-    for corpus_name, lines in corpus_data.items():
-        config = _get_dataset_config(corpus_name, corpus_config)
+    for split_name, lines in corpus_data.items():
+        config = _get_dataset_config(split_name, corpus_config)
         config_key = id(config)
         if config_key not in permuted_indices_by_dataset:
             num_indices = len(lines)
@@ -72,10 +77,10 @@ def _compute_corpus_splits(
             permuted_supervised_lines = [lines[i] for i in permuted_indices[:min_corpus_len]]
             permuted_testing_lines = [lines[i] for i in permuted_indices[min_corpus_len:min_corpus_len * 2]]
 
-            corpus_splits[corpus_name + config.supervised_split_suffix] = permuted_supervised_lines
-            corpus_splits[corpus_name + config.testing_split_suffix] = permuted_testing_lines
+            corpus_splits[split_name + config.supervised_split_suffix] = permuted_supervised_lines
+            corpus_splits[split_name + config.testing_split_suffix] = permuted_testing_lines
         else:
-            corpus_splits[corpus_name] = [lines[i] for i in permuted_indices[:min_corpus_len]]
+            corpus_splits[split_name] = [lines[i] for i in permuted_indices[:min_corpus_len]]
     return corpus_splits
 
 
@@ -88,8 +93,8 @@ def _extract_activations(
 
     activations_by_layer = {
         layer: {
-            'mean': [],
-            'last': []
+            PoolingTypeEnum.LAST: [],
+            PoolingTypeEnum.MEAN: []
         }
         for layer in experiment_config.target_layers
     }
@@ -118,13 +123,13 @@ def _extract_activations(
             summed_activations = (layer_activations * attention_mask).sum(dim=1)
             mean_activation = summed_activations / num_tokens_batched.unsqueeze(-1)
 
-            activations_by_layer[layer]['last'].append(last_activation.cpu())
-            activations_by_layer[layer]['mean'].append(mean_activation.cpu())
+            activations_by_layer[layer][PoolingTypeEnum.LAST].append(last_activation.cpu())
+            activations_by_layer[layer][PoolingTypeEnum.MEAN].append(mean_activation.cpu())
 
     activation_matrices_by_layer = {
         layer: LayerActivationMatrices(
-            last = torch.cat(activations_dict['last']),
-            mean = torch.cat(activations_dict['mean']),
+            last = torch.cat(activations_dict[PoolingTypeEnum.LAST]),
+            mean = torch.cat(activations_dict[PoolingTypeEnum.MEAN]),
         )
         for layer, activations_dict in activations_by_layer.items()
     }
@@ -154,8 +159,8 @@ if __name__ == '__main__':
         )
 
         for layer, activation_matrices in tqdm(activations.items(), desc=f'Saving Activations'):
-            last_filename = get_activation_filename(split_name, layer, 'last')
-            mean_filename = get_activation_filename(split_name, layer, 'mean')
+            last_filename = get_activation_filename(split_name, layer, PoolingTypeEnum.LAST)
+            mean_filename = get_activation_filename(split_name, layer, PoolingTypeEnum.MEAN)
 
             last_path = ACTIVATIONS_DIR / last_filename
             mean_path = ACTIVATIONS_DIR / mean_filename

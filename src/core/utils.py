@@ -1,6 +1,7 @@
+from enum import StrEnum
 from pathlib import Path
 import json
-from typing import Iterable, Literal
+from typing import Iterable
 
 
 type MetricsJson = dict[
@@ -10,6 +11,19 @@ type MetricsJson = dict[
         ]
     ]
 ]
+
+
+class PoolingTypeEnum(StrEnum):
+    LAST = 'last'
+    MEAN = 'mean'
+
+
+class AggregateEstimators(StrEnum):
+    CHORDAL_MEAN_CORPORA = 'chordal_mean_corpora'
+    CHORDAL_MEAN_ALL = 'chordal_mean_all'
+    LEACE_CORPORA = 'leace_corpora'
+    LEACE_ALL = 'leace_all'
+    CONTROL = 'control'
 
 
 CORE_DIR = Path(__file__).parent
@@ -37,9 +51,27 @@ METRICS_DIR.mkdir(parents=True, exist_ok=True)
 def get_activation_filename(
         split_name: str,
         layer: int,
-        pooling_type: Literal['last', 'mean'],
+        pooling_type: PoolingTypeEnum,
 ) -> str:
     return f'{split_name}_layer{layer:02d}_{pooling_type}.pt'
+
+
+def get_estimator_filename(
+        estimator_name: str,
+        layer: int,
+        pooling_type: PoolingTypeEnum,
+        rank: int,
+) -> str:
+    return f'{estimator_name}_layer{layer:02d}_{pooling_type}_{rank:02d}.pt'
+
+
+def get_svd_estimator_name(split_name: str) -> str:
+    return f'svd_{split_name}'
+
+
+def get_supervised_estimator_name(corpus_name: str) -> str:
+    return f'supervised_{corpus_name}'
+
 
 
 def check_text_len_bounds(

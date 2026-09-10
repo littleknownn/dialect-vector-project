@@ -1,6 +1,9 @@
-from src.core.utils import RAW_DATA_DIR
-from dataclasses import dataclass
 from pathlib import Path
+from typing import NamedTuple
+
+from dataclasses import dataclass
+
+from src.core.utils import RAW_DATA_DIR
 
 
 @dataclass
@@ -10,6 +13,7 @@ class ExperimentConfig:
     bnb_4bit_quant_type: str
 
     target_layers: list[int]
+    target_ranks: list[int]
     batch_size: int
     max_seq_len: int
     random_seed: int
@@ -27,6 +31,25 @@ class DatasetConfig:
 
 
 @dataclass
+class SupervisedDatasetConfig(DatasetConfig):
+    aae_split_suffix: str
+    sae_split_suffix: str
+
+    supervised_split_suffix: str
+    testing_split_suffix: str
+
+
+@dataclass
+class RealAAEConfig(SupervisedDatasetConfig):
+    in_dir: Path
+    header: bool
+    delimiter: str
+    
+    aae_col_idx: int
+    sae_col_idx: int
+
+
+@dataclass
 class CoraalConfig(DatasetConfig):
     in_dir: Path
     header: bool
@@ -35,20 +58,6 @@ class CoraalConfig(DatasetConfig):
     text_col_idx: int
     speaker_col_idx: int
     interviewer_marker: str
-
-
-@dataclass
-class RealAAEConfig(DatasetConfig):
-    in_dir: Path
-    header: bool
-    delimiter: str
-    
-    aae_col_idx: int
-    sae_col_idx: int
-    aae_split_suffix: str
-    sae_split_suffix: str
-    supervised_split_suffix: str
-    testing_split_suffix: str
 
 
 @dataclass
@@ -64,12 +73,47 @@ class GithubDatasetConfig(DatasetConfig):
     delimiter: str
 
 
+class SupervisedPair(NamedTuple):
+    corpus_name: str
+    aae_split: str
+    sae_split: str
+
+
+class EstimatorData(NamedTuple):
+    supervised_split_pairs: list[SupervisedPair]
+    aae_corpora_splits: list[str]
+
+
+def get_estimator_data(corpus_config: dict[str, DatasetConfig]) -> EstimatorData:
+    supervised_split_pairs = []
+    aae_corpora_splits = []
+
+    for corpus_name, config in corpus_config.items():
+        if isinstance(config, SupervisedDatasetConfig):
+            supervised_split_pairs.append(
+                SupervisedPair(
+                    corpus_name = corpus_name,
+                    aae_split = corpus_name + config.aae_split_suffix + config.supervised_split_suffix,
+                    sae_split = corpus_name + config.sae_split_suffix + config.supervised_split_suffix,
+                )
+            )
+        else:
+            aae_corpora_splits.append(corpus_name)
+
+    estimator_data = EstimatorData(
+        supervised_split_pairs,
+        aae_corpora_splits,
+    )
+    return estimator_data
+
+
 EXPERIMENT_CONFIG = ExperimentConfig(
     model_hf_path = 'meta-llama/Llama-3.2-3B',
     load_in_4bit = True,
     bnb_4bit_quant_type = 'nf4',
 
     target_layers = [15, 20],
+    target_ranks = [2, 4, 8],
     batch_size = 2,
     max_seq_len = 512,
     random_seed = 42,
