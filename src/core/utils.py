@@ -1,7 +1,11 @@
 from enum import StrEnum
 from pathlib import Path
 import json
-from typing import Iterable
+from typing import (
+    Iterable,
+    TypedDict,
+    NotRequired,
+)
 
 
 type MetricsJson = dict[
@@ -18,6 +22,11 @@ class PoolingTypeEnum(StrEnum):
     MEAN = 'mean'
 
 
+class SingleEstimatorPrefixes(StrEnum):
+    SVD = 'svd_'
+    SUPERVISED = 'supervised_'
+
+
 class AggregateEstimators(StrEnum):
     CHORDAL_MEAN_CORPORA = 'chordal_mean_corpora'
     CHORDAL_MEAN_ALL = 'chordal_mean_all'
@@ -26,52 +35,26 @@ class AggregateEstimators(StrEnum):
     CONTROL = 'control'
 
 
-CORE_DIR = Path(__file__).parent
-SRC_DIR = CORE_DIR.parent
-ROOT_DIR = SRC_DIR.parent
-
-DATA_DIR = ROOT_DIR / 'data'
-DATA_DIR.mkdir(parents=True, exist_ok=True)
-
-RAW_DATA_DIR = DATA_DIR / 'raw'
-
-PROCESSED_DATA_DIR = DATA_DIR / 'processed'
-PROCESSED_DATA_DIR.mkdir(parents=True, exist_ok=True)
-
-ACTIVATIONS_DIR = DATA_DIR / 'activations'
-ACTIVATIONS_DIR.mkdir(parents=True, exist_ok=True)
-
-ESTIMATORS_DIR = DATA_DIR / 'estimators'
-ESTIMATORS_DIR.mkdir(parents=True, exist_ok=True)
-
-METRICS_DIR = DATA_DIR / 'metrics'
-METRICS_DIR.mkdir(parents=True, exist_ok=True)
+class MetricTypeEnum(StrEnum):
+    LLR_SHIFT = 'llr_shift'
+    PERPLEXITY = 'perplexity'
 
 
-def get_activation_filename(
-        split_name: str,
-        layer: int,
-        pooling_type: PoolingTypeEnum,
-) -> str:
-    return f'{split_name}_layer{layer:02d}_{pooling_type}.pt'
+class SweepMetric(TypedDict):
+    layer: int
+    pooling_type: PoolingTypeEnum
+    rank: int
 
+    corpus_name: str
+    estimator_name: str
+    alpha: float
 
-def get_estimator_filename(
-        estimator_name: str,
-        layer: int,
-        pooling_type: PoolingTypeEnum,
-        rank: int,
-) -> str:
-    return f'{estimator_name}_layer{layer:02d}_{pooling_type}_{rank:02d}.pt'
+    metric: MetricTypeEnum
+    value: float
 
-
-def get_svd_estimator_name(split_name: str) -> str:
-    return f'svd_{split_name}'
-
-
-def get_supervised_estimator_name(corpus_name: str) -> str:
-    return f'supervised_{corpus_name}'
-
+    ci_lower: NotRequired[float]
+    ci_upper: NotRequired[float]
+    p_value: NotRequired[float]
 
 
 def check_text_len_bounds(
@@ -103,15 +86,21 @@ def save_jsonl(
             if not check_text_len_bounds(text, min_len_chars, min_len_words, max_len_words):
                 continue
             json_object = {'text': text}
-            out_file.write(json.dumps(json_object) + '\n')
+            out_file.write(f'{json.dumps(json_object, ensure_ascii=False)}\n')
+
+
+def load_jsonl(filepath: Path):
+    with open(filepath, 'r', encoding='utf-8') as corpus_file:
+        lines = [json.loads(line)['text'] for line in corpus_file]
+    return lines
 
 
 def save_json(
-        data: dict,
-        dir: Path,
-        filename: str,
+        data: dict | list,
+        out_dir: Path,
+        out_filename: str,
         json_indent: int = 4,
     ) -> None:
-    out_filepath = dir / f'{filename}.json'
+    out_filepath = out_dir / f'{out_filename}.json'
     with open(out_filepath, 'w') as file:
         json.dump(data, file, indent=json_indent)

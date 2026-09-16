@@ -1,4 +1,3 @@
-# controls
 import gc
 from pathlib import Path
 
@@ -13,15 +12,15 @@ from src.core.config import (
     get_estimator_data,
 )
 import src.core.math_utils as math_utils
-from src.core.utils import (
+from src.core.paths import (
     ACTIVATIONS_DIR,
-    AggregateEstimators,
     ESTIMATORS_DIR,
-    get_activation_filename,
-    get_estimator_filename,
-    get_supervised_estimator_name,
-    get_svd_estimator_name,
+    get_sweep_suffix,
+)
+from src.core.utils import (
+    AggregateEstimators,
     PoolingTypeEnum,
+    SingleEstimatorPrefixes,
 )
 
 
@@ -38,7 +37,8 @@ def _save_estimators(
     for rank in target_ranks:
         for estimator_name, subspace in estimators.items():
             rank_subspace = subspace[:, :rank].contiguous()
-            out_filename = get_estimator_filename(estimator_name, layer, pooling_type, rank)
+            sweep_suffix = get_sweep_suffix(layer, pooling_type, rank)
+            out_filename = f'{estimator_name}{sweep_suffix}.pt'
             out_filepath = out_dir / out_filename
             torch.save(rank_subspace, out_filepath)
 
@@ -55,15 +55,16 @@ def compute_and_save_estimators(
     max_rank = max(experiment_config.target_ranks)
     for layer in tqdm(experiment_config.target_layers):
         for pooling_type in PoolingTypeEnum:
+            sweep_suffix = get_sweep_suffix(layer, pooling_type)
             model_dim = None
             estimators = {}
             for split_name in all_aae_splits:
                 activation_matrix = torch.load(
-                    in_dir / get_activation_filename(split_name, layer, pooling_type),
+                    in_dir / f'{split_name}{sweep_suffix}.pt',
                     weights_only=True,
                 ).to(device, dtype=torch.float32)
 
-                estimators[get_svd_estimator_name(split_name)] = math_utils.compute_svd_estimator(
+                estimators[f'{SingleEstimatorPrefixes.SVD}{split_name}'] = math_utils.compute_svd_estimator(
                     activation_matrix,
                     max_rank,
                 )
@@ -74,16 +75,16 @@ def compute_and_save_estimators(
 
             for split_pair in supervised_split_pairs:
                 aae_activation_matrix = torch.load(
-                    in_dir / get_activation_filename(split_pair.aae_split, layer, pooling_type),
+                    in_dir / f'{split_pair.aae_split}{sweep_suffix}.pt',
                     weights_only=True,
                 ).to(device, dtype=torch.float32)
 
                 sae_activation_matrix = torch.load(
-                    in_dir / get_activation_filename(split_pair.sae_split, layer, pooling_type),
+                    in_dir / f'{split_pair.sae_split}{sweep_suffix}.pt',
                     weights_only=True,
                 ).to(device, dtype=torch.float32)
 
-                estimators[get_supervised_estimator_name(split_pair.corpus_name)] = math_utils.compute_supervised_estimator(
+                estimators[f'{SingleEstimatorPrefixes.SUPERVISED}{split_pair.corpus_name}'] = math_utils.compute_supervised_estimator(
                     aae_activation_matrix,
                     sae_activation_matrix,
                     max_rank,
@@ -94,7 +95,7 @@ def compute_and_save_estimators(
 
             aae_corpora_activations_list = [
                 torch.load(
-                    in_dir / get_activation_filename(split_name, layer, pooling_type),
+                    in_dir / f'{split_name}{sweep_suffix}.pt',
                     weights_only=True,
                 ).to(device, dtype=torch.float32)
                 for split_name in aae_corpora_splits
@@ -106,7 +107,7 @@ def compute_and_save_estimators(
 
             all_aae_splits_activations_list = [
                 torch.load(
-                    in_dir / get_activation_filename(split_name, layer, pooling_type),
+                    in_dir / f'{split_name}{sweep_suffix}.pt',
                     weights_only=True,
                 ).to(device, dtype=torch.float32)
                 for split_name in all_aae_splits
@@ -117,7 +118,7 @@ def compute_and_save_estimators(
             )
 
             aae_corpora_svd_estimator_list = [
-                estimators[get_svd_estimator_name(split_name)] for split_name in aae_corpora_splits
+                estimators[f'{SingleEstimatorPrefixes.SVD}{split_name}'] for split_name in aae_corpora_splits
             ]
             estimators[AggregateEstimators.CHORDAL_MEAN_CORPORA] = math_utils.compute_chordal_mean_estimator(
                 aae_corpora_svd_estimator_list,
@@ -125,7 +126,7 @@ def compute_and_save_estimators(
             )
 
             all_aae_splits_svd_estimator_list = [
-                estimators[get_svd_estimator_name(split_name)] for split_name in all_aae_splits
+                estimators[split_name] for split_name in all_aae_splits
             ]
             estimators[AggregateEstimators.CHORDAL_MEAN_ALL] = math_utils.compute_chordal_mean_estimator(
                 all_aae_splits_svd_estimator_list,
@@ -154,6 +155,6 @@ if __name__ == '__main__':
     compute_and_save_estimators(
         CORPUS_CONFIG,
         EXPERIMENT_CONFIG,
-        in_dir = ACTIVATIONS_DIR,
-        out_dir = ESTIMATORS_DIR,
+        in_dir=ACTIVATIONS_DIR,
+        out_dir=ESTIMATORS_DIR,
     )

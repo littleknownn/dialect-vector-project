@@ -1,3 +1,5 @@
+from typing import NamedTuple
+
 import torch
 import torch.nn.functional as F
 
@@ -5,9 +7,46 @@ import torch.nn.functional as F
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 
+class BootstrapResults(NamedTuple):
+    mean: float
+    ci_lower: float
+    ci_upper: float
+    p_value: float
+
+
+def compute_bootstrap_ci(
+    tensor: torch.Tensor,
+    num_samples: int,
+    bootstrap_alpha: float,
+) -> BootstrapResults:
+    tensor = tensor.view(-1)
+    tensor_len = len(tensor)
+    mean = tensor.mean().item()
+
+    indices = torch.randint(high=tensor_len, size=(num_samples, tensor_len), device=tensor.device)
+    sampled_tensor = tensor[indices]
+    sampled_means = sampled_tensor.mean(dim=1)
+
+    quantile = bootstrap_alpha / 2
+    ci_lower = torch.quantile(sampled_means, quantile).item()
+    ci_upper = torch.quantile(sampled_means, 1 - quantile).item()
+
+    centered_sampled_means = sampled_means - mean
+    significant_samples_mask = torch.abs(centered_sampled_means) >= abs(mean)
+    p_value = significant_samples_mask.float().mean().item()
+
+    results = BootstrapResults(
+        mean=mean,
+        ci_lower=ci_lower,
+        ci_upper=ci_upper,
+        p_value=p_value,
+    )
+    return results
+
+
 def compute_svd_estimator(
-        activation_matrix: torch.Tensor,
-        rank: int,
+    activation_matrix: torch.Tensor,
+    rank: int,
 ) -> torch.Tensor:
     _, _, V = torch.pca_lowrank(activation_matrix, q=rank, center=True)
     return V.contiguous()

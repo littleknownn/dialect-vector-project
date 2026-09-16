@@ -13,17 +13,21 @@ from transformers import (
 
 from src.core.base_model import load_base_model
 from src.core.config import (
+    BaselineDatasetConfig,
     CORPUS_CONFIG,
     DatasetConfig,
     EXPERIMENT_CONFIG,
     ExperimentConfig,
-    RealAAEConfig,
+    SupervisedDatasetConfig,
+)
+from src.core.paths import (
+    ACTIVATIONS_DIR,
+    get_sweep_suffix,
+    PROCESSED_DATA_DIR,
 )
 from src.core.utils import (
-    ACTIVATIONS_DIR,
-    get_activation_filename,
+    load_jsonl,
     PoolingTypeEnum,
-    PROCESSED_DATA_DIR,
 )
 
 
@@ -48,8 +52,7 @@ def _load_corpus_data(processed_data_dir: Path) -> dict[str, list[str]]:
     corpus_data = {}
     for corpus_path in corpus_paths_iter:
         split_name = corpus_path.stem
-        with open(corpus_path, 'r', encoding='utf-8') as corpus_file:
-            corpus_lines = [json.loads(line)['text'] for line in corpus_file]
+        corpus_lines = load_jsonl(corpus_path)
         corpus_data[split_name] = corpus_lines
     return corpus_data
 
@@ -59,7 +62,11 @@ def _compute_corpus_splits(
         corpus_config: dict[str, DatasetConfig],
         seed: int
     ) -> dict[str, list[str]]:
-    min_corpus_len = len(min(corpus_data.values(), key=len))
+    min_corpus_len = min(
+        len(lines)
+        for split_name, lines in corpus_data.items()
+        if not isinstance(_get_dataset_config(split_name, corpus_config), BaselineDatasetConfig)
+    )
     permutation_generator = torch.Generator().manual_seed(seed)
 
     corpus_splits = {}
@@ -72,13 +79,14 @@ def _compute_corpus_splits(
             num_indices = len(lines)
             permuted_indices_by_dataset[config_key] = torch.randperm(num_indices, generator=permutation_generator).tolist()
         permuted_indices = permuted_indices_by_dataset[config_key]
-
-        if isinstance(config, RealAAEConfig):
+        if isinstance(config, BaselineDatasetConfig):
+            corpus_splits[split_name] = [lines[i] for i in permuted_indices]
+        elif isinstance(config, SupervisedDatasetConfig):
             permuted_supervised_lines = [lines[i] for i in permuted_indices[:min_corpus_len]]
             permuted_testing_lines = [lines[i] for i in permuted_indices[min_corpus_len:min_corpus_len * 2]]
 
-            corpus_splits[split_name + config.supervised_split_suffix] = permuted_supervised_lines
-            corpus_splits[split_name + config.testing_split_suffix] = permuted_testing_lines
+            corpus_splits[f'{split_name}{config.supervised_split_suffix}'] = permuted_supervised_lines
+            corpus_splits[f'{split_name}{config.testing_split_suffix}'] = permuted_testing_lines
         else:
             corpus_splits[split_name] = [lines[i] for i in permuted_indices[:min_corpus_len]]
     return corpus_splits
@@ -89,7 +97,7 @@ def _extract_activations(
         tokenizer: PreTrainedTokenizerBase,
         lines: list[str],
         experiment_config: ExperimentConfig,
-    ) -> dict[int, tuple[torch.Tensor, torch.Tensor]]:
+    ) -> dict[int, LayerActivationMatrices]:
 
     activations_by_layer = {
         layer: {
@@ -159,8 +167,11 @@ if __name__ == '__main__':
         )
 
         for layer, activation_matrices in tqdm(activations.items(), desc=f'Saving Activations'):
-            last_filename = get_activation_filename(split_name, layer, PoolingTypeEnum.LAST)
-            mean_filename = get_activation_filename(split_name, layer, PoolingTypeEnum.MEAN)
+            last_suffix = get_sweep_suffix(layer, PoolingTypeEnum.LAST)
+            mean_suffix = get_sweep_suffix(layer, PoolingTypeEnum.MEAN)
+
+            last_filename = f'{split_name}{last_suffix}.pt'
+            mean_filename = f'{split_name}{mean_suffix}.pt'
 
             last_path = ACTIVATIONS_DIR / last_filename
             mean_path = ACTIVATIONS_DIR / mean_filename
