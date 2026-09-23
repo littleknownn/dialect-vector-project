@@ -3,6 +3,7 @@ from pathlib import Path
 import json
 from typing import (
     Iterable,
+    NamedTuple,
     TypedDict,
     NotRequired,
 )
@@ -55,6 +56,22 @@ class SweepMetric(TypedDict):
     ci_lower: NotRequired[float]
     ci_upper: NotRequired[float]
     p_value: NotRequired[float]
+
+
+class EstimatorKey(NamedTuple):
+    layer: int
+    pooling_type: PoolingTypeEnum
+    rank: int
+    estimator_name: str
+
+
+class SweepKey(NamedTuple):
+    layer: int
+    pooling_type: PoolingTypeEnum
+    rank: int
+    estimator_name: str
+    corpus_name: str
+    metric: MetricTypeEnum
 
 
 def check_text_len_bounds(

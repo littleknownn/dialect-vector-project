@@ -9,6 +9,7 @@ from typing import (
 
 import torch
 import torch.nn as nn
+from tqdm import tqdm
 from transformers import (
     PreTrainedModel,
     PreTrainedTokenizerBase,
@@ -49,6 +50,11 @@ type TokenizedInputs = dict[str, torch.Tensor]
 class BatchedPairedInputs(NamedTuple):
     aae: list[TokenizedInputs]
     sae: list[TokenizedInputs]
+
+
+class PairedLosses(NamedTuple):
+    aae: torch.Tensor
+    sae: torch.Tensor
 
 
 class EstimatorSteering:
@@ -141,6 +147,7 @@ def _load_and_tokenize_supervised_corpora(
         if isinstance(config, SupervisedDatasetConfig):
             aae_filepath = processed_data_dir / f'{corpus_name}{config.aae_split_suffix}{config.testing_split_suffix}.jsonl'
             sae_filepath = processed_data_dir / f'{corpus_name}{config.sae_split_suffix}{config.testing_split_suffix}.jsonl'
+
             supervised_corpora[corpus_name] = BatchedPairedInputs(
                 aae=_batch_and_tokenize(
                     load_jsonl(aae_filepath),
@@ -190,18 +197,18 @@ def _compute_dialect_llr_shift_ci(
     model: PreTrainedModel,
     batched_aae_inputs: list[TokenizedInputs],
     batched_sae_inputs: list[TokenizedInputs],
+    unsteered_losses: PairedLosses,
     layer_module: nn.Module,
     estimator_matrix: torch.Tensor,
     alpha: float,
     num_bootstrap_samples: int,
     bootstrap_alpha: float,
 ) -> math_utils.BootstrapResults:
-    sae_losses = _compute_batched_input_losses(model, batched_sae_inputs)
-    aae_losses = _compute_batched_input_losses(model, batched_aae_inputs)
     with EstimatorSteering(estimator_matrix, layer_module, alpha):
         steered_aae_losses = _compute_batched_input_losses(model, batched_aae_inputs)
         steered_sae_losses = _compute_batched_input_losses(model, batched_sae_inputs)
-    llr_shift_tensor = (steered_sae_losses - steered_aae_losses) - (sae_losses - aae_losses)
+    
+    llr_shift_tensor = ((steered_sae_losses - steered_aae_losses) - (unsteered_losses.sae - unsteered_losses.aae)).to(torch.float32)
     bootstrap_results = math_utils.compute_bootstrap_ci(llr_shift_tensor, num_bootstrap_samples, bootstrap_alpha)
     return bootstrap_results
 
@@ -254,6 +261,7 @@ def _compute_baseline_sweep_metrics(
 def _compute_supervised_sweep_metrics(
     model: PreTrainedModel,
     supervised_corpora: dict[str, BatchedPairedInputs],
+    unsteered_supervised_losses: dict[str, PairedLosses],
     layer: int,
     pooling_type: PoolingTypeEnum,
     rank: int,
@@ -267,7 +275,15 @@ def _compute_supervised_sweep_metrics(
     layer_module = model.model.layers[layer]
     for corpus_name, paired_inputs in supervised_corpora.items():
         llr_shift_stats = _compute_dialect_llr_shift_ci(
-            model, paired_inputs.aae, paired_inputs.sae, layer_module, estimator_matrix, num_bootstrap_samples, bootstrap_alpha
+            model,
+            paired_inputs.aae,
+            paired_inputs.sae,
+            unsteered_supervised_losses[corpus_name],
+            layer_module,
+            estimator_matrix,
+            alpha,
+            num_bootstrap_samples,
+            bootstrap_alpha,
         )
         sweep_metrics.append(SweepMetric(
             layer=layer,
@@ -297,6 +313,7 @@ def compute_and_save_subspace_metrics(
     out_filename_root: str,
     out_dir: Path,
 ) -> None:
+    tqdm.write('Tokenizing Reference Corpora...')
     baseline_corpora = _load_and_tokenize_baseline_corpora(
         model, tokenizer, corpus_config, experiment_config, processed_data_dir
     )
@@ -304,51 +321,65 @@ def compute_and_save_subspace_metrics(
         model, tokenizer, corpus_config, experiment_config, processed_data_dir
     )
 
-    for layer in experiment_config.target_layers:
-        for pooling_type in PoolingTypeEnum:
-            for rank in experiment_config.target_ranks:
-                sweep_metrics = []
+    tqdm.write('Computing Unsteered Losses...')
+    unsteered_supervised_losses = {
+        corpus_name: PairedLosses(
+            aae=_compute_batched_input_losses(model, paired_inputs.aae),
+            sae=_compute_batched_input_losses(model, paired_inputs.sae),
+        )
+        for corpus_name, paired_inputs in supervised_corpora.items()
+    }
 
-                sweep_suffix = get_sweep_suffix(layer, pooling_type, rank)
-                estimator_paths = estimators_dir.glob(f'*{sweep_suffix}.pt')
-                for estimator_path in estimator_paths:
-                    estimator_name = estimator_path.name.removesuffix(f'{sweep_suffix}.pt')
-                    estimator_matrix = torch.load(estimator_path, weights_only=True).to(model.device, dtype=model.dtype)
+    sweeps_tuples = itertools.product(
+        experiment_config.target_layers,
+        PoolingTypeEnum,
+        experiment_config.target_ranks,
+    )
+    for layer, pooling_type, rank in tqdm(sweeps_tuples, desc='Computing Steering Metrics'):
+        sweep_metrics = []
 
-                    for alpha in experiment_config.target_alphas:
-                        sweep_metrics.extend(_compute_baseline_sweep_metrics(
-                            model,
-                            baseline_corpora,
-                            layer,
-                            pooling_type,
-                            rank,
-                            estimator_name,
-                            estimator_matrix,
-                            alpha,
-                        ))
-                        sweep_metrics.extend(_compute_supervised_sweep_metrics(
-                            model,
-                            supervised_corpora,
-                            layer,
-                            pooling_type,
-                            rank,
-                            estimator_name,
-                            estimator_matrix,
-                            alpha,
-                            experiment_config.num_bootstrap_samples,
-                            experiment_config.bootstrap_alpha,
-                        ))
-                        
-                    del estimator_matrix
-                    gc.collect()
-                    torch.cuda.empty_cache()
+        sweep_suffix = get_sweep_suffix(layer, pooling_type, rank)
+        estimator_paths = estimators_dir.glob(f'*{sweep_suffix}.pt')
+        for estimator_path in estimator_paths:
+            estimator_name = estimator_path.name.removesuffix(f'{sweep_suffix}.pt')
+            estimator_matrix = torch.load(estimator_path, weights_only=True).to(model.device, dtype=model.dtype)
+            tqdm.write(f'Evaluating {estimator_name} Estimator')
+
+            for alpha in experiment_config.target_alphas:
+                sweep_metrics.extend(_compute_baseline_sweep_metrics(
+                    model,
+                    baseline_corpora,
+                    layer,
+                    pooling_type,
+                    rank,
+                    estimator_name,
+                    estimator_matrix,
+                    alpha,
+                ))
+                sweep_metrics.extend(_compute_supervised_sweep_metrics(
+                    model,
+                    supervised_corpora,
+                    unsteered_supervised_losses,
+                    layer,
+                    pooling_type,
+                    rank,
+                    estimator_name,
+                    estimator_matrix,
+                    alpha,
+                    experiment_config.num_bootstrap_samples,
+                    experiment_config.bootstrap_alpha,
+                ))
                 
-                out_filename = f'{out_filename_root}{sweep_suffix}'
-                save_json(
-                    sweep_metrics,
-                    out_dir,
-                    out_filename,
-                )
+            del estimator_matrix
+            gc.collect()
+            torch.cuda.empty_cache()
+        
+        out_filename = f'{out_filename_root}{sweep_suffix}'
+        save_json(
+            sweep_metrics,
+            out_dir,
+            out_filename,
+        )
 
 
 if __name__ == '__main__':

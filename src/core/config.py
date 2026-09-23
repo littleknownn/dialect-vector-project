@@ -96,6 +96,17 @@ class EstimatorData(NamedTuple):
     aae_corpora_splits: list[str]
 
 
+def get_dataset_config(
+    corpus_name: str,
+    corpus_config: dict[str, DatasetConfig],
+) -> DatasetConfig:
+    if corpus_name in corpus_config:
+        return corpus_config[corpus_name]
+    for corpus_name_untagged, config in corpus_config.items():
+        if corpus_name.startswith(corpus_name_untagged):
+            return config
+
+
 def get_estimator_data(corpus_config: dict[str, DatasetConfig]) -> EstimatorData:
     supervised_split_pairs = []
     aae_corpora_splits = []
@@ -126,11 +137,12 @@ EXPERIMENT_CONFIG = ExperimentConfig(
     load_in_4bit = True,
     bnb_4bit_quant_type = 'nf4',
 
-    target_layers = [15, 20],
-    target_ranks = [2, 4, 8],
-    target_alphas = [2, 5],
-    batch_size = 2,
-    max_seq_len = 512,
+    target_layers = [8, 14, 18, 22, 26],
+    target_ranks = [4],
+    target_alphas = [-0.5, 0.0, 0.25, 0.5, 0.75, 1.0],
+    
+    batch_size = 16,
+    max_seq_len = 64,
     random_seed = 42,
 
     num_bootstrap_samples = 2000,
@@ -151,7 +163,7 @@ CORPUS_CONFIG = {
 
         min_len_chars = 15,
         min_len_words = 5,
-        max_len_words = 400,
+        max_len_words = 35,
 
         skipped_data_patterns = [
             r'rd-',
@@ -190,7 +202,7 @@ CORPUS_CONFIG = {
 
         min_len_chars = 15,
         min_len_words = 5,
-        max_len_words = 400,
+        max_len_words = 35,
 
         skipped_data_patterns = [],
         skipped_case_patterns = [],
@@ -211,7 +223,7 @@ CORPUS_CONFIG = {
 
         min_len_chars = 15,
         min_len_words = 5,
-        max_len_words = 400,
+        max_len_words = 35,
 
         skipped_data_patterns = [
             r'(?:^|\blyrics)(?:verse|chorus|intro|outro|hook|bridge|interlude|skit|narrator|scratches|produced|vocals sampled|beat changes)\b',
@@ -234,7 +246,7 @@ CORPUS_CONFIG = {
 
         min_len_chars = 15,
         min_len_words = 5,
-        max_len_words = 400,
+        max_len_words = 35,
 
         skipped_data_patterns = [],
         skipped_case_patterns = [],
@@ -264,7 +276,7 @@ CORPUS_CONFIG = {
 
         min_len_chars = 15,
         min_len_words = 5,
-        max_len_words = 400,
+        max_len_words = 35,
 
         skipped_data_patterns = [],
         skipped_case_patterns = [],
@@ -288,7 +300,7 @@ CORPUS_CONFIG = {
         
         min_len_chars = 15,
         min_len_words = 5,
-        max_len_words = 400,
+        max_len_words = 35,
 
         skipped_data_patterns = [
             r'^(?:\s*=\s*)+[^=]+(?:\s*=\s*)+\s*$',

@@ -1,6 +1,5 @@
 import gc
 import itertools
-import json
 from pathlib import Path
 from typing import NamedTuple
 
@@ -13,83 +12,26 @@ from transformers import (
 
 from src.core.base_model import load_base_model
 from src.core.config import (
-    BaselineDatasetConfig,
     CORPUS_CONFIG,
-    DatasetConfig,
     EXPERIMENT_CONFIG,
+    BaselineDatasetConfig,
     ExperimentConfig,
-    SupervisedDatasetConfig,
+    get_dataset_config,
 )
 from src.core.paths import (
     ACTIVATIONS_DIR,
-    get_sweep_suffix,
     PROCESSED_DATA_DIR,
+    get_sweep_suffix,
 )
 from src.core.utils import (
-    load_jsonl,
     PoolingTypeEnum,
+    load_jsonl,
 )
 
 
 class LayerActivationMatrices(NamedTuple):
     mean: torch.Tensor
     last: torch.Tensor
-
-
-def _get_dataset_config(
-        corpus_name: str,
-        corpus_config: dict[str, DatasetConfig],
-    ) -> DatasetConfig:
-    if corpus_name in corpus_config:
-        return corpus_config[corpus_name]
-    for corpus_name_untagged, config in corpus_config.items():
-        if corpus_name.startswith(corpus_name_untagged):
-            return config
-
-
-def _load_corpus_data(processed_data_dir: Path) -> dict[str, list[str]]:
-    corpus_paths_iter = processed_data_dir.glob('*.jsonl')
-    corpus_data = {}
-    for corpus_path in corpus_paths_iter:
-        split_name = corpus_path.stem
-        corpus_lines = load_jsonl(corpus_path)
-        corpus_data[split_name] = corpus_lines
-    return corpus_data
-
-
-def _compute_corpus_splits(
-        corpus_data: dict[str, list[str]],
-        corpus_config: dict[str, DatasetConfig],
-        seed: int
-    ) -> dict[str, list[str]]:
-    min_corpus_len = min(
-        len(lines)
-        for split_name, lines in corpus_data.items()
-        if not isinstance(_get_dataset_config(split_name, corpus_config), BaselineDatasetConfig)
-    )
-    permutation_generator = torch.Generator().manual_seed(seed)
-
-    corpus_splits = {}
-    permuted_indices_by_dataset = {}
-
-    for split_name, lines in corpus_data.items():
-        config = _get_dataset_config(split_name, corpus_config)
-        config_key = id(config)
-        if config_key not in permuted_indices_by_dataset:
-            num_indices = len(lines)
-            permuted_indices_by_dataset[config_key] = torch.randperm(num_indices, generator=permutation_generator).tolist()
-        permuted_indices = permuted_indices_by_dataset[config_key]
-        if isinstance(config, BaselineDatasetConfig):
-            corpus_splits[split_name] = [lines[i] for i in permuted_indices]
-        elif isinstance(config, SupervisedDatasetConfig):
-            permuted_supervised_lines = [lines[i] for i in permuted_indices[:min_corpus_len]]
-            permuted_testing_lines = [lines[i] for i in permuted_indices[min_corpus_len:min_corpus_len * 2]]
-
-            corpus_splits[f'{split_name}{config.supervised_split_suffix}'] = permuted_supervised_lines
-            corpus_splits[f'{split_name}{config.testing_split_suffix}'] = permuted_testing_lines
-        else:
-            corpus_splits[split_name] = [lines[i] for i in permuted_indices[:min_corpus_len]]
-    return corpus_splits
 
 
 def _extract_activations(
@@ -149,16 +91,21 @@ if __name__ == '__main__':
     model, tokenizer = load_base_model(EXPERIMENT_CONFIG)
     model.eval()
 
-    corpus_data = _load_corpus_data(PROCESSED_DATA_DIR)
-    corpus_splits = _compute_corpus_splits(
-        corpus_data,
-        CORPUS_CONFIG,
-        seed=EXPERIMENT_CONFIG.random_seed,
-    )
+    for corpus_path in PROCESSED_DATA_DIR.glob('*.jsonl'):
+        split_name = corpus_path.stem
 
-    for split_name in corpus_splits:
+        config = get_dataset_config(split_name, CORPUS_CONFIG)
+        if isinstance(config, BaselineDatasetConfig):
+            tqdm.write(f'Skipping {split_name} Baseline Corpus')
+            continue
+
+        # # temp
+        # checked_path = ACTIVATIONS_DIR / f'{split_name}_layer{EXPERIMENT_CONFIG.target_layers[0]:02d}_{PoolingTypeEnum.MEAN}.pt'
+        # if checked_path.exists():
+        #     continue
+
         tqdm.write(f'Loading {split_name} Corpus...')
-        lines = corpus_splits[split_name]
+        lines = load_jsonl(corpus_path)
         activations = _extract_activations(
             model,
             tokenizer,

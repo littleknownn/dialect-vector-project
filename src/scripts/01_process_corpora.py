@@ -1,19 +1,23 @@
 import csv
+import re
+from typing import Optional
 
 from datasets import load_dataset
 import requests
-import re
 from tqdm import tqdm
-from typing import Optional
+import torch
 
 from src.core.config import (
     CORPUS_CONFIG,
+    EXPERIMENT_CONFIG,
+    BaselineDatasetConfig,
     CoraalSourceConfig,
     DatasetConfig,
     GithubSourceConfig,
     HFSourceConfig,
     RealAaeSourceConfig,
     SupervisedDatasetConfig,
+    get_dataset_config,
 )
 from src.core.paths import PROCESSED_DATA_DIR
 from src.core.utils import (
@@ -139,6 +143,43 @@ def process_gh_dataset(config: DatasetConfig) -> list[str]:
     return cleaned_lines
 
 
+def _compute_corpus_splits(
+        corpus_data: dict[str, list[str]],
+        corpus_config: dict[str, DatasetConfig],
+        seed: int
+    ) -> dict[str, list[str]]:
+    min_corpus_len = min(
+        len(lines)
+        for split_name, lines in corpus_data.items()
+        if not isinstance(get_dataset_config(split_name, corpus_config), BaselineDatasetConfig)
+    )
+    permutation_generator = torch.Generator().manual_seed(seed)
+
+    corpus_splits = {}
+    permuted_indices_by_dataset = {}
+
+    for split_name, lines in corpus_data.items():
+        config = get_dataset_config(split_name, corpus_config)
+        config_key = id(config)
+        if config_key not in permuted_indices_by_dataset:
+            num_indices = len(lines)
+            permuted_indices_by_dataset[config_key] = torch.randperm(num_indices, generator=permutation_generator).tolist()
+        permuted_indices = permuted_indices_by_dataset[config_key]
+
+        if isinstance(config, BaselineDatasetConfig):
+            corpus_splits[split_name] = [lines[i] for i in permuted_indices[:min_corpus_len]]
+        elif isinstance(config, SupervisedDatasetConfig):
+            permuted_supervised_lines = [lines[i] for i in permuted_indices[:min_corpus_len]]
+            permuted_testing_lines = [lines[i] for i in permuted_indices[min_corpus_len:min_corpus_len * 2]]
+
+            corpus_splits[f'{split_name}{config.supervised_split_suffix}'] = permuted_supervised_lines
+            corpus_splits[f'{split_name}{config.testing_split_suffix}'] = permuted_testing_lines
+        else:
+            corpus_splits[split_name] = [lines[i] for i in permuted_indices[:min_corpus_len]]
+    return corpus_splits
+
+
+
 if __name__ == '__main__':
     real_aae_name, real_aae_config = next(
         (
@@ -148,40 +189,40 @@ if __name__ == '__main__':
         ),
         (None, None),
     )
+
+    cleaned_corpus_data = {}
     twitter_aae_excluded_lines = set()
+    
     if real_aae_name:
         cleaned_aae, cleaned_sae = process_realaae_dataset(real_aae_config)
         twitter_aae_excluded_lines = {line.lower() for line in cleaned_aae}
-        save_jsonl(
-            cleaned_aae,
-            PROCESSED_DATA_DIR,
-            f'{real_aae_name}{real_aae_config.aae_split_suffix}',
-        )
-        save_jsonl(
-            cleaned_sae,
-            PROCESSED_DATA_DIR,
-            f'{real_aae_name}{real_aae_config.sae_split_suffix}',
-        )
+
+        cleaned_corpus_data[f'{real_aae_name}{real_aae_config.aae_split_suffix}'] = cleaned_aae
+        cleaned_corpus_data[f'{real_aae_name}{real_aae_config.sae_split_suffix}'] = cleaned_sae
 
     for corpus_name, config in CORPUS_CONFIG.items():
         tqdm.write(f'Processing {corpus_name} Data...')
 
         if isinstance(config.source_config, RealAaeSourceConfig):
             continue
-
         elif isinstance(config.source_config, CoraalSourceConfig):
             cleaned_lines = process_coraal_dataset(config)
-
         elif isinstance(config.source_config, HFSourceConfig):
             cleaned_lines = process_hf_dataset(config, excluded_lines=twitter_aae_excluded_lines)
-
         elif isinstance(config.source_config, GithubSourceConfig):
             cleaned_lines = process_gh_dataset(config)
-        
+
+        cleaned_corpus_data[corpus_name] = cleaned_lines
+
+    tqdm.write('Truncating Corpora...')
+    corpus_splits = _compute_corpus_splits(cleaned_corpus_data, CORPUS_CONFIG, EXPERIMENT_CONFIG.random_seed)
+
+    for split_name, lines in corpus_splits.items():
+        config = get_dataset_config(split_name, CORPUS_CONFIG)
         save_jsonl(
-                cleaned_lines,
+                lines,
                 PROCESSED_DATA_DIR,
-                corpus_name,
+                split_name,
                 config.min_len_chars,
                 config.min_len_words,
                 config.max_len_words,
