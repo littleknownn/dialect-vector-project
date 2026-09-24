@@ -21,7 +21,7 @@ from src.core.config import (
 from src.core.paths import (
     ACTIVATIONS_DIR,
     PROCESSED_DATA_DIR,
-    get_sweep_suffix,
+    get_sweep_identifier,
 )
 from src.core.utils import (
     PoolingTypeEnum,
@@ -67,7 +67,7 @@ def _extract_activations(
         token_indices_batched = torch.arange(len(batch), device=model.device)
 
         for layer in experiment_config.target_layers:
-            layer_activations = outputs.hidden_states[layer]
+            layer_activations = outputs.hidden_states[layer + 1]
             
             last_activation = layer_activations[token_indices_batched, num_tokens_batched - 1, :]
             summed_activations = (layer_activations * attention_mask).sum(dim=1)
@@ -114,11 +114,11 @@ if __name__ == '__main__':
         )
 
         for layer, activation_matrices in tqdm(activations.items(), desc=f'Saving Activations'):
-            last_suffix = get_sweep_suffix(layer, PoolingTypeEnum.LAST)
-            mean_suffix = get_sweep_suffix(layer, PoolingTypeEnum.MEAN)
+            last_identifier = get_sweep_identifier(layer, PoolingTypeEnum.LAST)
+            mean_identifier = get_sweep_identifier(layer, PoolingTypeEnum.MEAN)
 
-            last_filename = f'{split_name}{last_suffix}.pt'
-            mean_filename = f'{split_name}{mean_suffix}.pt'
+            last_filename = f'{split_name}_{last_identifier}.pt'
+            mean_filename = f'{split_name}_{mean_identifier}.pt'
 
             last_path = ACTIVATIONS_DIR / last_filename
             mean_path = ACTIVATIONS_DIR / mean_filename

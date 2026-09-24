@@ -17,6 +17,7 @@ class ExperimentConfig:
     target_alphas: list[int]
     batch_size: int
     max_seq_len: int
+    max_eval_lines: int
     random_seed: int
 
     num_bootstrap_samples: int
@@ -143,6 +144,7 @@ EXPERIMENT_CONFIG = ExperimentConfig(
     
     batch_size = 16,
     max_seq_len = 64,
+    max_eval_lines = 256,
     random_seed = 42,
 
     num_bootstrap_samples = 2000,

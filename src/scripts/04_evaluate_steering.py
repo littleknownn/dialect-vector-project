@@ -27,17 +27,16 @@ from src.core.config import (
 import src.core.math_utils as math_utils
 from src.core.paths import (
     ESTIMATORS_DIR,
-    get_sweep_suffix,
-    METRICS_DIR,
     PROCESSED_DATA_DIR,
-    STEERED_METRICS_FILENAME_ROOT,
+    SWEEPS_DIR,
+    get_sweep_identifier,
 )
 from src.core.utils import (
-    load_jsonl,
     MetricTypeEnum,
     PoolingTypeEnum,
-    save_json,
     SweepMetric,
+    load_jsonl,
+    save_json,
 )
 
 
@@ -126,7 +125,7 @@ def _load_and_tokenize_baseline_corpora(
         if isinstance(config, BaselineDatasetConfig):
             filepath = processed_data_dir / f'{corpus_name}.jsonl'
             baseline_corpora[corpus_name] = _batch_and_tokenize(
-                load_jsonl(filepath),
+                load_jsonl(filepath)[:experiment_config.max_eval_lines],
                 tokenizer,
                 experiment_config.batch_size,
                 experiment_config.max_seq_len,
@@ -150,14 +149,14 @@ def _load_and_tokenize_supervised_corpora(
 
             supervised_corpora[corpus_name] = BatchedPairedInputs(
                 aae=_batch_and_tokenize(
-                    load_jsonl(aae_filepath),
+                    load_jsonl(aae_filepath)[:experiment_config.max_eval_lines],
                     tokenizer,
                     experiment_config.batch_size,
                     experiment_config.max_seq_len,
                     model.device
                 ),
                 sae=_batch_and_tokenize(
-                    load_jsonl(sae_filepath),
+                    load_jsonl(sae_filepath)[:experiment_config.max_eval_lines],
                     tokenizer,
                     experiment_config.batch_size,
                     experiment_config.max_seq_len,
@@ -209,7 +208,7 @@ def _compute_dialect_llr_shift_ci(
         steered_sae_losses = _compute_batched_input_losses(model, batched_sae_inputs)
     
     llr_shift_tensor = ((steered_sae_losses - steered_aae_losses) - (unsteered_losses.sae - unsteered_losses.aae)).to(torch.float32)
-    bootstrap_results = math_utils.compute_bootstrap_ci(llr_shift_tensor, num_bootstrap_samples, bootstrap_alpha)
+    bootstrap_results = math_utils.compute_bootstrap(llr_shift_tensor, num_bootstrap_samples, bootstrap_alpha)
     return bootstrap_results
 
 
@@ -310,7 +309,6 @@ def compute_and_save_subspace_metrics(
     experiment_config: ExperimentConfig,
     processed_data_dir: Path,
     estimators_dir: Path,
-    out_filename_root: str,
     out_dir: Path,
 ) -> None:
     tqdm.write('Tokenizing Reference Corpora...')
@@ -336,12 +334,14 @@ def compute_and_save_subspace_metrics(
         experiment_config.target_ranks,
     )
     for layer, pooling_type, rank in tqdm(sweeps_tuples, desc='Computing Steering Metrics'):
-        sweep_metrics = []
+        sweep_identifier = get_sweep_identifier(layer, pooling_type, rank)
+        if (out_dir / f'{sweep_identifier}.json').exists():
+            continue
 
-        sweep_suffix = get_sweep_suffix(layer, pooling_type, rank)
-        estimator_paths = estimators_dir.glob(f'*{sweep_suffix}.pt')
+        sweep_metrics = []
+        estimator_paths = estimators_dir.glob(f'*_{sweep_identifier}.pt')
         for estimator_path in estimator_paths:
-            estimator_name = estimator_path.name.removesuffix(f'{sweep_suffix}.pt')
+            estimator_name = estimator_path.name.removesuffix(f'_{sweep_identifier}.pt')
             estimator_matrix = torch.load(estimator_path, weights_only=True).to(model.device, dtype=model.dtype)
             tqdm.write(f'Evaluating {estimator_name} Estimator')
 
@@ -374,16 +374,15 @@ def compute_and_save_subspace_metrics(
             gc.collect()
             torch.cuda.empty_cache()
         
-        out_filename = f'{out_filename_root}{sweep_suffix}'
         save_json(
             sweep_metrics,
             out_dir,
-            out_filename,
+            sweep_identifier,
         )
 
 
 if __name__ == '__main__':
     model, tokenizer = load_base_model(EXPERIMENT_CONFIG)
     compute_and_save_subspace_metrics(
-        model, tokenizer, CORPUS_CONFIG, EXPERIMENT_CONFIG, PROCESSED_DATA_DIR, ESTIMATORS_DIR, STEERED_METRICS_FILENAME_ROOT, METRICS_DIR
+        model, tokenizer, CORPUS_CONFIG, EXPERIMENT_CONFIG, PROCESSED_DATA_DIR, ESTIMATORS_DIR, SWEEPS_DIR
     )

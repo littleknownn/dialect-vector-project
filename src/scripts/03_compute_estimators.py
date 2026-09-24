@@ -16,7 +16,7 @@ import src.core.math_utils as math_utils
 from src.core.paths import (
     ACTIVATIONS_DIR,
     ESTIMATORS_DIR,
-    get_sweep_suffix,
+    get_sweep_identifier,
 )
 from src.core.utils import (
     AggregateEstimators,
@@ -38,8 +38,8 @@ def _save_estimators(
     for rank in target_ranks:
         for estimator_name, subspace in estimators.items():
             rank_subspace = subspace[:, :rank].contiguous()
-            sweep_suffix = get_sweep_suffix(layer, pooling_type, rank)
-            out_filename = f'{estimator_name}{sweep_suffix}.pt'
+            sweep_identifier = get_sweep_identifier(layer, pooling_type, rank)
+            out_filename = f'{estimator_name}_{sweep_identifier}.pt'
             out_filepath = out_dir / out_filename
             torch.save(rank_subspace, out_filepath)
 
@@ -59,12 +59,12 @@ def compute_and_save_estimators(
         PoolingTypeEnum,
     )
     for layer, pooling_type in tqdm(sweep_tuples, desc='Computing Estimators'):
-        sweep_suffix = get_sweep_suffix(layer, pooling_type)
+        sweep_identifier = get_sweep_identifier(layer, pooling_type)
         model_dim = None
         estimators = {}
         for split_name in all_aae_splits:
             activation_matrix = torch.load(
-                in_dir / f'{split_name}{sweep_suffix}.pt',
+                in_dir / f'{split_name}_{sweep_identifier}.pt',
                 weights_only=True,
             ).to(device, dtype=torch.float32)
 
@@ -79,12 +79,12 @@ def compute_and_save_estimators(
 
         for split_pair in supervised_split_pairs:
             aae_activation_matrix = torch.load(
-                in_dir / f'{split_pair.aae_split}{sweep_suffix}.pt',
+                in_dir / f'{split_pair.aae_split}_{sweep_identifier}.pt',
                 weights_only=True,
             ).to(device, dtype=torch.float32)
 
             sae_activation_matrix = torch.load(
-                in_dir / f'{split_pair.sae_split}{sweep_suffix}.pt',
+                in_dir / f'{split_pair.sae_split}_{sweep_identifier}.pt',
                 weights_only=True,
             ).to(device, dtype=torch.float32)
 
@@ -98,7 +98,7 @@ def compute_and_save_estimators(
 
         aae_corpora_activations_list = [
             torch.load(
-                in_dir / f'{split_name}{sweep_suffix}.pt',
+                in_dir / f'{split_name}_{sweep_identifier}.pt',
                 weights_only=True,
             ).to(device, dtype=torch.float32)
             for split_name in aae_corpora_splits
@@ -110,7 +110,7 @@ def compute_and_save_estimators(
 
         all_aae_splits_activations_list = [
             torch.load(
-                in_dir / f'{split_name}{sweep_suffix}.pt',
+                in_dir / f'{split_name}_{sweep_identifier}.pt',
                 weights_only=True,
             ).to(device, dtype=torch.float32)
             for split_name in all_aae_splits

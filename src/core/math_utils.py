@@ -14,7 +14,7 @@ class BootstrapResults(NamedTuple):
     p_value: float
 
 
-def compute_bootstrap_ci(
+def compute_bootstrap(
     tensor: torch.Tensor,
     num_samples: int,
     bootstrap_alpha: float,

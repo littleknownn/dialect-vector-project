@@ -18,6 +18,9 @@ type MetricsJson = dict[
 ]
 
 
+type GeometricSummary = list[GeometricMetricsData]
+
+
 class PoolingTypeEnum(StrEnum):
     LAST = 'last'
     MEAN = 'mean'
@@ -56,6 +59,43 @@ class SweepMetric(TypedDict):
     ci_lower: NotRequired[float]
     ci_upper: NotRequired[float]
     p_value: NotRequired[float]
+
+
+class GeometricMetricsData(TypedDict):
+    layer: int
+    pooling_type: PoolingTypeEnum
+    rank: int
+    estimator_a_name: str
+    estimator_b_name: str
+    procrustes_alignment: float
+    chordal_distances: float
+
+
+class AucSummary(TypedDict):
+    layer: int
+    pooling_type: PoolingTypeEnum
+    rank: int
+    estimator_name: str
+    corpus_name: str
+    metric: MetricTypeEnum
+    auc_pos: float
+    auc_neg: float
+
+
+class FdrSummary(TypedDict):
+    layer: int
+    pooling_type: PoolingTypeEnum
+    rank: int
+    estimator_name: str
+    corpus_name: str
+    metric: MetricTypeEnum
+    alpha: float
+    p_value_fdr: float
+
+
+class BehavioralSummary(TypedDict):
+    auc: list[AucSummary]
+    fdr: list[FdrSummary]
 
 
 class EstimatorKey(NamedTuple):

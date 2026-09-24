@@ -21,18 +21,22 @@ ACTIVATIONS_DIR.mkdir(parents=True, exist_ok=True)
 ESTIMATORS_DIR = DATA_DIR / '04_estimators'
 ESTIMATORS_DIR.mkdir(parents=True, exist_ok=True)
 
-METRICS_DIR = DATA_DIR / '05_metrics'
+SWEEPS_DIR = DATA_DIR / '05_sweeps'
+SWEEPS_DIR.mkdir(parents=True, exist_ok=True)
+
+METRICS_DIR = DATA_DIR / '06_metrics'
 METRICS_DIR.mkdir(parents=True, exist_ok=True)
 
-STEERED_METRICS_FILENAME_ROOT = 'steered'
+GEOMETRIC_RESULTS_FILENAME = 'geometric_results'
+BEHAVIORAL_RESULTS_FILENAME = 'behavioral_results'
 
 
-def get_sweep_suffix(
+def get_sweep_identifier(
         layer: int,
         pooling_type: PoolingTypeEnum,
         rank: int | None = None,
 ) -> str:
-    suffix = f'_layer{layer:02d}_{pooling_type}'
+    identifier = f'layer{layer:02d}_{pooling_type}'
     if rank is not None:
-        suffix += f'_{rank:02d}'
-    return suffix
+        identifier += f'_{rank:02d}'
+    return identifier
