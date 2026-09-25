@@ -333,19 +333,19 @@ def compute_and_save_subspace_metrics(
         PoolingTypeEnum,
         experiment_config.target_ranks,
     )
-    for layer, pooling_type, rank in tqdm(sweeps_tuples, desc='Computing Steering Metrics'):
+    for layer, pooling_type, rank in sweeps_tuples:
         sweep_identifier = get_sweep_identifier(layer, pooling_type, rank)
         if (out_dir / f'{sweep_identifier}.json').exists():
             continue
+        tqdm.write(f'Evaluating Sweep: Layer {layer:02d}, {pooling_type} Pooling, Rank {rank}...')
 
         sweep_metrics = []
         estimator_paths = estimators_dir.glob(f'*_{sweep_identifier}.pt')
         for estimator_path in estimator_paths:
             estimator_name = estimator_path.name.removesuffix(f'_{sweep_identifier}.pt')
             estimator_matrix = torch.load(estimator_path, weights_only=True).to(model.device, dtype=model.dtype)
-            tqdm.write(f'Evaluating {estimator_name} Estimator')
 
-            for alpha in experiment_config.target_alphas:
+            for alpha in tqdm(experiment_config.target_alphas, desc=f'Evaluating {estimator_name} Estimator'):
                 sweep_metrics.extend(_compute_baseline_sweep_metrics(
                     model,
                     baseline_corpora,
@@ -386,3 +386,4 @@ if __name__ == '__main__':
     compute_and_save_subspace_metrics(
         model, tokenizer, CORPUS_CONFIG, EXPERIMENT_CONFIG, PROCESSED_DATA_DIR, ESTIMATORS_DIR, SWEEPS_DIR
     )
+    tqdm.write('04: Steering Evaluation Complete\n')

@@ -13,6 +13,7 @@ from src.core.config import (
     BaselineDatasetConfig,
     CoraalSourceConfig,
     DatasetConfig,
+    ExperimentConfig,
     GithubSourceConfig,
     HFSourceConfig,
     RealAaeSourceConfig,
@@ -81,7 +82,7 @@ def _process_coraal_lines(lines: list[str], config: DatasetConfig) -> list[str]:
     return utterances
 
 
-def process_coraal_dataset(config: DatasetConfig) -> list[str]:
+def _process_coraal_dataset(config: DatasetConfig) -> list[str]:
     cleaned_lines = []
     for city_dir in tqdm(config.source_config.in_dir.iterdir()):
         if not city_dir.is_dir():
@@ -96,7 +97,7 @@ def process_coraal_dataset(config: DatasetConfig) -> list[str]:
     return cleaned_lines
 
 
-def process_realaae_dataset(config: DatasetConfig) -> tuple[list[str], list[str]]:
+def _process_realaae_dataset(config: DatasetConfig) -> tuple[list[str], list[str]]:
     cleaned_lines_aae, cleaned_lines_sae = [], []
     dataset_path = next(config.source_config.in_dir.glob('*.csv'))
     with open(dataset_path, mode='r', encoding='utf-8', errors='ignore') as dataset_file:
@@ -116,7 +117,7 @@ def process_realaae_dataset(config: DatasetConfig) -> tuple[list[str], list[str]
     return cleaned_lines_aae, cleaned_lines_sae
 
 
-def process_hf_dataset(
+def _process_hf_dataset(
         config: DatasetConfig,
         excluded_lines: set[str] | None = None,
 ) -> list[str]:
@@ -131,7 +132,7 @@ def process_hf_dataset(
     return cleaned_lines
 
 
-def process_gh_dataset(config: DatasetConfig) -> list[str]:
+def _process_gh_dataset(config: DatasetConfig) -> list[str]:
     lyrics = requests.get(config.source_config.git_url)
     lyrics.raise_for_status()
     lines = lyrics.text.split(config.source_config.delimiter)
@@ -179,12 +180,14 @@ def _compute_corpus_splits(
     return corpus_splits
 
 
-
-if __name__ == '__main__':
+def load_and_process_corpora(
+    corpus_config: dict[str, DatasetConfig],
+    experiment_config: ExperimentConfig,
+):
     real_aae_name, real_aae_config = next(
         (
             (corpus_name, config)
-            for corpus_name, config in CORPUS_CONFIG.items()
+            for corpus_name, config in corpus_config.items()
             if isinstance(config.source_config, RealAaeSourceConfig)
         ),
         (None, None),
@@ -194,7 +197,7 @@ if __name__ == '__main__':
     twitter_aae_excluded_lines = set()
     
     if real_aae_name:
-        cleaned_aae, cleaned_sae = process_realaae_dataset(real_aae_config)
+        cleaned_aae, cleaned_sae = _process_realaae_dataset(real_aae_config)
         twitter_aae_excluded_lines = {line.lower() for line in cleaned_aae}
 
         cleaned_corpus_data[f'{real_aae_name}{real_aae_config.aae_split_suffix}'] = cleaned_aae
@@ -206,17 +209,20 @@ if __name__ == '__main__':
         if isinstance(config.source_config, RealAaeSourceConfig):
             continue
         elif isinstance(config.source_config, CoraalSourceConfig):
-            cleaned_lines = process_coraal_dataset(config)
+            cleaned_lines = _process_coraal_dataset(config)
         elif isinstance(config.source_config, HFSourceConfig):
-            cleaned_lines = process_hf_dataset(config, excluded_lines=twitter_aae_excluded_lines)
+            cleaned_lines = _process_hf_dataset(config, excluded_lines=twitter_aae_excluded_lines)
         elif isinstance(config.source_config, GithubSourceConfig):
-            cleaned_lines = process_gh_dataset(config)
+            cleaned_lines = _process_gh_dataset(config)
 
         cleaned_corpus_data[corpus_name] = cleaned_lines
 
     tqdm.write('Truncating Corpora...')
-    corpus_splits = _compute_corpus_splits(cleaned_corpus_data, CORPUS_CONFIG, EXPERIMENT_CONFIG.random_seed)
+    corpus_splits = _compute_corpus_splits(cleaned_corpus_data, corpus_config, experiment_config.random_seed)
+    return corpus_splits
 
+if __name__ == '__main__':
+    corpus_splits = load_and_process_corpora(CORPUS_CONFIG, EXPERIMENT_CONFIG)
     for split_name, lines in corpus_splits.items():
         config = get_dataset_config(split_name, CORPUS_CONFIG)
         save_jsonl(
@@ -227,4 +233,4 @@ if __name__ == '__main__':
                 config.min_len_words,
                 config.max_len_words,
             )
-    tqdm.write('Data Processing Complete')
+    tqdm.write('01: Corpus Processing Complete\n')

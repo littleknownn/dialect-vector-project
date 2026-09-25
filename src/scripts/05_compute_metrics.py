@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 import numpy as np
+from tqdm import tqdm
 from scipy.stats import false_discovery_control
 from scipy.linalg import (
     orthogonal_procrustes,
@@ -112,7 +113,7 @@ def compute_geometric_results(
     for key in estimators.keys():
         estimators_by_sweep[(key.layer, key.pooling_type, key.rank)].append(key)
 
-    for estimator_keys in estimators_by_sweep.values():
+    for estimator_keys in tqdm(estimators_by_sweep.values(), desc='Computing Geometric Results'):
         for key_a, key_b in itertools.combinations(estimator_keys, 2):
             tensor_a = estimators[key_a].cpu().numpy()
             tensor_b = estimators[key_b].cpu().numpy()
@@ -137,7 +138,7 @@ def compute_behavioral_results(
 
     llr_keys = []
     llr_p_values = []
-    for sweep_key, curve_points in steering_metric_sweeps.items():
+    for sweep_key, curve_points in tqdm(steering_metric_sweeps.items(), desc='Computing Behavioral Results'):
         pos_points = [p for p in curve_points if p.alpha >= 0.0]
         neg_points = [p for p in curve_points if p.alpha <= 0.0]
 
@@ -219,9 +220,10 @@ def flatten_behavioral_results(behavioral_results: BehavioralResults) -> Behavio
 
 
 if __name__ == '__main__':
+    tqdm.write('Loading Data...')
     estimators = load_estimators(ESTIMATORS_DIR, EXPERIMENT_CONFIG)
     steering_metric_sweeps = load_steering_metric_sweeps(SWEEPS_DIR)
-
+    
     geometric_results = compute_geometric_results(estimators)
     behavioral_results = compute_behavioral_results(steering_metric_sweeps)
 
@@ -230,3 +232,5 @@ if __name__ == '__main__':
     
     save_json(geometric_summary, METRICS_DIR, GEOMETRIC_RESULTS_FILENAME)
     save_json(behavioral_summary, METRICS_DIR, BEHAVIORAL_RESULTS_FILENAME)
+
+    tqdm.write('05: Metric Computation Complete\n')

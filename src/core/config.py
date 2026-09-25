@@ -135,16 +135,16 @@ def get_estimator_data(corpus_config: dict[str, DatasetConfig]) -> EstimatorData
 
 EXPERIMENT_CONFIG = ExperimentConfig(
     model_hf_path = 'meta-llama/Llama-3.2-3B',
-    load_in_4bit = True,
+    load_in_4bit = False,
     bnb_4bit_quant_type = 'nf4',
 
-    target_layers = [8, 14, 18, 22, 26],
+    target_layers = [4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26],
     target_ranks = [4],
-    target_alphas = [-0.5, 0.0, 0.25, 0.5, 0.75, 1.0],
+    target_alphas = [-1.0, -0.75, -0.5, -0.25, 0.0, 0.25, 0.5, 0.75, 1.0],
     
     batch_size = 16,
     max_seq_len = 64,
-    max_eval_lines = 256,
+    max_eval_lines = 512,
     random_seed = 42,
 
     num_bootstrap_samples = 2000,

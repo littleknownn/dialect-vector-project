@@ -9,6 +9,8 @@ from transformers import (
 )
 
 def get_quantization_config(experiment_config: ExperimentConfig) -> BitsAndBytesConfig:
+    if not experiment_config.load_in_4bit:
+        return None
     quantization_config = BitsAndBytesConfig(
         load_in_4bit = experiment_config.load_in_4bit,
         bnb_4bit_quant_type = experiment_config.bnb_4bit_quant_type,
@@ -20,6 +22,7 @@ def load_base_model(experiment_config: ExperimentConfig) -> tuple[PreTrainedMode
     model = AutoModelForCausalLM.from_pretrained(
         experiment_config.model_hf_path,
         quantization_config = get_quantization_config(experiment_config),
+        dtype = 'auto',
         device_map = 'auto',
     )
     
