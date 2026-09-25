@@ -238,7 +238,7 @@ def _compute_baseline_sweep_metrics(
 ) -> list[SweepMetric]:
     sweep_metrics = []
     layer_module = model.model.layers[layer]
-    for corpus_name, baseline_inputs in baseline_corpora.items():
+    for corpus_name, baseline_inputs in tqdm(baseline_corpora.items(), desc='Baseline Evaluation'):
         perplexity = _compute_steered_token_perplexity(
             model, baseline_inputs, layer_module, estimator_matrix, alpha
         )
@@ -272,7 +272,7 @@ def _compute_supervised_sweep_metrics(
 ) -> list[SweepMetric]:
     sweep_metrics = []
     layer_module = model.model.layers[layer]
-    for corpus_name, paired_inputs in supervised_corpora.items():
+    for corpus_name, paired_inputs in tqdm(supervised_corpora.items(), desc='Supervised Evaluation'):
         llr_shift_stats = _compute_dialect_llr_shift_ci(
             model,
             paired_inputs.aae,
@@ -337,13 +337,14 @@ def compute_and_save_subspace_metrics(
         sweep_identifier = get_sweep_identifier(layer, pooling_type, rank)
         if (out_dir / f'{sweep_identifier}.json').exists():
             continue
+        tqdm.write(f'Evaluating Sweep: Layer {layer:02d}, {pooling_type} Pooling, Rank {rank}...')
 
         sweep_metrics = []
         estimator_paths = estimators_dir.glob(f'*_{sweep_identifier}.pt')
         for estimator_path in estimator_paths:
             estimator_name = estimator_path.name.removesuffix(f'_{sweep_identifier}.pt')
             estimator_matrix = torch.load(estimator_path, weights_only=True).to(model.device, dtype=model.dtype)
-            tqdm.write(f'Evaluating {estimator_name} Estimator')
+            tqdm.write(f'Evaluating {estimator_name} Estimator...')
 
             for alpha in experiment_config.target_alphas:
                 sweep_metrics.extend(_compute_baseline_sweep_metrics(
@@ -386,3 +387,4 @@ if __name__ == '__main__':
     compute_and_save_subspace_metrics(
         model, tokenizer, CORPUS_CONFIG, EXPERIMENT_CONFIG, PROCESSED_DATA_DIR, ESTIMATORS_DIR, SWEEPS_DIR
     )
+    tqdm.write('04: Steering Evaluation Complete\n')

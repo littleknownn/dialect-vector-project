@@ -7,7 +7,6 @@ requires-python = ">=3.12"
 dependencies = [
     "accelerate>=1.13.0",
     "bitsandbytes>=0.49.2",
-    "en-core-web-sm",
     "hf-xet>=1.5.0",
     "ipykernel>=6.29.5",
     "jupyter>=1.1.1",
@@ -29,7 +28,6 @@ where = ["."]
 include = ["src*"]
 
 [tool.uv.sources]
-en-core-web-sm = { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.0/en_core_web_sm-3.7.0.tar.gz" }
 torch = { index = "pytorch-cu124" }
 
 [[tool.uv.index]]

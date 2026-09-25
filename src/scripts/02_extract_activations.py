@@ -15,6 +15,7 @@ from src.core.config import (
     CORPUS_CONFIG,
     EXPERIMENT_CONFIG,
     BaselineDatasetConfig,
+    DatasetConfig,
     ExperimentConfig,
     get_dataset_config,
 )
@@ -87,22 +88,31 @@ def _extract_activations(
     return activation_matrices_by_layer
 
 
-if __name__ == '__main__':
-    model, tokenizer = load_base_model(EXPERIMENT_CONFIG)
+def extract_and_save_activations(
+    model: PreTrainedModel,
+    tokenizer: PreTrainedTokenizerBase,
+    corpus_config: dict[str, DatasetConfig],
+    experiment_config: ExperimentConfig,
+    in_dir: Path,
+    out_dir: Path,
+) -> None:
     model.eval()
-
-    for corpus_path in PROCESSED_DATA_DIR.glob('*.jsonl'):
+    for corpus_path in in_dir.glob('*.jsonl'):
         split_name = corpus_path.stem
 
-        config = get_dataset_config(split_name, CORPUS_CONFIG)
+        config = get_dataset_config(split_name, corpus_config)
         if isinstance(config, BaselineDatasetConfig):
             tqdm.write(f'Skipping {split_name} Baseline Corpus')
             continue
 
-        # # temp
-        # checked_path = ACTIVATIONS_DIR / f'{split_name}_layer{EXPERIMENT_CONFIG.target_layers[0]:02d}_{PoolingTypeEnum.MEAN}.pt'
-        # if checked_path.exists():
-        #     continue
+        activation_filepaths = (
+            (out_dir / f'{split_name}_{get_sweep_identifier(layer, pooling_type)}.pt')
+            for layer in experiment_config.target_layers
+            for pooling_type in PoolingTypeEnum
+        )
+        if all(filepath.exists() for filepath in activation_filepaths):
+            tqdm.write(f'Skipping {split_name} Preexisting Activations')
+            continue
 
         tqdm.write(f'Loading {split_name} Corpus...')
         lines = load_jsonl(corpus_path)
@@ -110,7 +120,7 @@ if __name__ == '__main__':
             model,
             tokenizer,
             lines,
-            EXPERIMENT_CONFIG,
+            experiment_config,
         )
 
         for layer, activation_matrices in tqdm(activations.items(), desc=f'Saving Activations'):
@@ -120,8 +130,8 @@ if __name__ == '__main__':
             last_filename = f'{split_name}_{last_identifier}.pt'
             mean_filename = f'{split_name}_{mean_identifier}.pt'
 
-            last_path = ACTIVATIONS_DIR / last_filename
-            mean_path = ACTIVATIONS_DIR / mean_filename
+            last_path = out_dir / last_filename
+            mean_path = out_dir / mean_filename
 
             torch.save(activation_matrices.last, last_path)
             torch.save(activation_matrices.mean, mean_path)
@@ -129,3 +139,9 @@ if __name__ == '__main__':
         del activations
         gc.collect()
         torch.cuda.empty_cache()
+
+
+if __name__ == '__main__':
+    model, tokenizer = load_base_model(EXPERIMENT_CONFIG)
+    extract_and_save_activations(model, tokenizer, CORPUS_CONFIG, EXPERIMENT_CONFIG, PROCESSED_DATA_DIR, ACTIVATIONS_DIR)
+    tqdm.write('02: Activation Extraction Complete\n')

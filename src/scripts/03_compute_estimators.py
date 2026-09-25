@@ -161,3 +161,4 @@ if __name__ == '__main__':
         in_dir=ACTIVATIONS_DIR,
         out_dir=ESTIMATORS_DIR,
     )
+    tqdm.write('03: Estimator Computation Complete\n')
