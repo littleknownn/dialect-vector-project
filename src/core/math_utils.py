@@ -23,7 +23,7 @@ def compute_bootstrap(
     tensor_len = len(tensor)
     mean = tensor.mean().item()
 
-    indices = torch.randint(high=tensor_len, size=(num_samples, tensor_len), device=tensor.device)
+    indices = torch.randint(tensor_len, size=(num_samples, tensor_len), device=tensor.device)
     sampled_tensor = tensor[indices]
     sampled_means = sampled_tensor.mean(dim=1)
 
@@ -44,21 +44,24 @@ def compute_bootstrap(
     return results
 
 
-def compute_svd_estimator(
-    activation_matrix: torch.Tensor,
-    rank: int,
+def compute_chordal_mean_estimator(
+        svd_estimators: list[torch.Tensor],
+        rank: int,
 ) -> torch.Tensor:
-    _, _, V = torch.pca_lowrank(activation_matrix, q=rank, center=True)
-    return V.contiguous()
+    svd_estimators_range = torch.cat(svd_estimators, dim=1)
+    U, _, _ = torch.linalg.svd(svd_estimators_range, full_matrices=False)
+    return U[:, :rank].contiguous()
 
-def compute_supervised_estimator(
-    aae_activation_matrix: torch.Tensor,
-    sae_activation_matrix: torch.Tensor,
+
+def compute_control_estimator(
+    model_dim: int,
     rank: int,
+    device: torch.device | str,
 ) -> torch.Tensor:
-    difference_matrix = aae_activation_matrix - sae_activation_matrix
-    _, _, V = torch.svd_lowrank(difference_matrix, q=rank)
-    return V.contiguous()
+    gaussian_matrix = torch.randn(model_dim, rank, device=device)
+    Q, _ = torch.linalg.qr(gaussian_matrix)
+    return Q.contiguous()
+
 
 def compute_leace_estimator(
         activation_matrices: list[torch.Tensor],
@@ -80,19 +83,28 @@ def compute_leace_estimator(
 
     return V.contiguous()
 
-def compute_chordal_mean_estimator(
-        svd_estimators: list[torch.Tensor],
-        rank: int,
-) -> torch.Tensor:
-    svd_estimators_range = torch.cat(svd_estimators, dim=1)
-    U, _, _ = torch.linalg.svd(svd_estimators_range, full_matrices=False)
-    return U[:, :rank].contiguous()
 
-def compute_control_estimator(
-    model_dim: int,
+def compute_supervised_estimator(
+    aae_activation_matrix: torch.Tensor,
+    sae_activation_matrix: torch.Tensor,
     rank: int,
-    device: torch.device | str,
 ) -> torch.Tensor:
-    gaussian_matrix = torch.randn(model_dim, rank, device=device)
-    Q, _ = torch.linalg.qr(gaussian_matrix)
-    return Q.contiguous()
+    difference_matrix = aae_activation_matrix - sae_activation_matrix
+    _, _, V = torch.svd_lowrank(difference_matrix, q=rank)
+    return V.contiguous()
+
+
+def compute_vector_mean(
+    activation_matrix: torch.Tensor,
+) -> torch.Tensor:
+    matrix_mean = activation_matrix.mean(dim=0)
+    vector_mean = F.normalize(matrix_mean, dim=0).unsqueeze(1)
+    return vector_mean
+
+
+def compute_svd_estimator(
+    activation_matrix: torch.Tensor,
+    rank: int,
+) -> torch.Tensor:
+    _, _, V = torch.pca_lowrank(activation_matrix, q=rank)
+    return V.contiguous()

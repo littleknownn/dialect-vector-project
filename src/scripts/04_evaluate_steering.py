@@ -1,5 +1,6 @@
 import gc
 import itertools
+import json
 import math
 from pathlib import Path
 from typing import (
@@ -34,6 +35,7 @@ from src.core.paths import (
 from src.core.utils import (
     MetricTypeEnum,
     PoolingTypeEnum,
+    SingleEstimatorPrefixes,
     SweepMetric,
     load_jsonl,
     save_json,
@@ -62,11 +64,16 @@ class EstimatorSteering:
             estimator_matrix: torch.Tensor,
             layer_module: int,
             alpha: float,
+            act_add: bool = False,
         ):
         self.estimator_matrix = estimator_matrix
         self.layer_module = layer_module
         self.alpha = alpha
+        self.act_add = act_add
         self.forward_hook = None
+
+        if act_add:
+            assert estimator_matrix.shape[1] == 1, 'ActAdd Steering requires a Rank-1 Estimator'
 
     def __enter__(self):
         self.forward_hook = self.layer_module.register_forward_hook(self._hook)
@@ -84,9 +91,12 @@ class EstimatorSteering:
     ) -> torch.Tensor | HiddenStateData:
         is_output_wrapped = isinstance(previous_layer_outputs, tuple)
         hidden_states = previous_layer_outputs[0] if is_output_wrapped else previous_layer_outputs
-        
-        subspace_projection = (hidden_states @ self.estimator_matrix) @ self.estimator_matrix.T
-        steered_hidden_states = hidden_states + self.alpha * subspace_projection
+
+        if self.act_add:
+            steered_hidden_states = hidden_states + self.alpha * self.estimator_matrix.T
+        else:
+            subspace_projection = (hidden_states @ self.estimator_matrix) @ self.estimator_matrix.T
+            steered_hidden_states = hidden_states + (self.alpha * subspace_projection)
 
         if is_output_wrapped:
             return (steered_hidden_states, *previous_layer_outputs[1:])
@@ -146,23 +156,58 @@ def _load_and_tokenize_supervised_corpora(
         if isinstance(config, SupervisedDatasetConfig):
             aae_filepath = processed_data_dir / f'{corpus_name}{config.aae_split_suffix}{config.testing_split_suffix}.jsonl'
             sae_filepath = processed_data_dir / f'{corpus_name}{config.sae_split_suffix}{config.testing_split_suffix}.jsonl'
-
+            
+            aae_lines = load_jsonl(aae_filepath)[:experiment_config.max_eval_lines]
+            sae_lines = load_jsonl(sae_filepath)[:experiment_config.max_eval_lines]
+            
             supervised_corpora[corpus_name] = BatchedPairedInputs(
                 aae=_batch_and_tokenize(
-                    load_jsonl(aae_filepath)[:experiment_config.max_eval_lines],
+                    aae_lines,
                     tokenizer,
                     experiment_config.batch_size,
                     experiment_config.max_seq_len,
-                    model.device
+                    model.device,
                 ),
                 sae=_batch_and_tokenize(
-                    load_jsonl(sae_filepath)[:experiment_config.max_eval_lines],
+                    sae_lines,
                     tokenizer,
                     experiment_config.batch_size,
                     experiment_config.max_seq_len,
-                    model.device
+                    model.device,
                 ),
-            )       
+            )
+
+            feature_indices_dict_path = processed_data_dir / f'{corpus_name}{config.feature_indices_dict_suffix}.json'
+            with open(feature_indices_dict_path, 'r', encoding='utf-8') as file:
+                feature_indices_dict = json.load(file)
+            
+            for feature, idx_line_dict in feature_indices_dict.items():
+                indices = [int(str_i) for str_i in idx_line_dict.keys()]
+                
+                valid_indices = [i for i in indices if i < len(aae_lines)]
+                if not valid_indices:
+                    continue
+
+                feature_lines_aae = [aae_lines[i] for i in valid_indices]
+                feature_lines_sae = [sae_lines[i] for i in valid_indices]
+
+                split_name = f'{corpus_name}_{feature}'
+                supervised_corpora[split_name] = BatchedPairedInputs(
+                    aae = _batch_and_tokenize(
+                        feature_lines_aae,
+                        tokenizer,
+                        experiment_config.batch_size,
+                        experiment_config.max_seq_len,
+                        model.device,
+                    ),
+                    sae = _batch_and_tokenize(
+                        feature_lines_sae,
+                        tokenizer,
+                        experiment_config.batch_size,
+                        experiment_config.max_seq_len,
+                        model.device,
+                    ),
+                )
     return supervised_corpora
 
 
@@ -202,8 +247,9 @@ def _compute_dialect_llr_shift_ci(
     alpha: float,
     num_bootstrap_samples: int,
     bootstrap_alpha: float,
+    act_add: bool,
 ) -> math_utils.BootstrapResults:
-    with EstimatorSteering(estimator_matrix, layer_module, alpha):
+    with EstimatorSteering(estimator_matrix, layer_module, alpha, act_add=act_add):
         steered_aae_losses = _compute_batched_input_losses(model, batched_aae_inputs)
         steered_sae_losses = _compute_batched_input_losses(model, batched_sae_inputs)
     
@@ -218,8 +264,9 @@ def _compute_steered_token_perplexity(
     layer_module: nn.Module,
     estimator_matrix: torch.Tensor,
     alpha: float,
+    act_add: bool,
 ) -> float:
-    with EstimatorSteering(estimator_matrix, layer_module, alpha):
+    with EstimatorSteering(estimator_matrix, layer_module, alpha, act_add=act_add):
         losses_tensor = _compute_batched_input_losses(model, inputs)
     mean_loss = losses_tensor.mean().item()
     perplexity = math.exp(mean_loss)
@@ -235,12 +282,13 @@ def _compute_baseline_sweep_metrics(
     estimator_name: str,
     estimator_matrix: torch.Tensor,
     alpha: float,
+    act_add: bool,
 ) -> list[SweepMetric]:
     sweep_metrics = []
     layer_module = model.model.layers[layer]
     for corpus_name, baseline_inputs in baseline_corpora.items():
         perplexity = _compute_steered_token_perplexity(
-            model, baseline_inputs, layer_module, estimator_matrix, alpha
+            model, baseline_inputs, layer_module, estimator_matrix, alpha, act_add
         )
         sweep_metrics.append(SweepMetric(
             layer=layer,
@@ -269,6 +317,7 @@ def _compute_supervised_sweep_metrics(
     alpha: float,
     num_bootstrap_samples: int,
     bootstrap_alpha: float,
+    act_add: bool,
 ) -> list[SweepMetric]:
     sweep_metrics = []
     layer_module = model.model.layers[layer]
@@ -283,6 +332,7 @@ def _compute_supervised_sweep_metrics(
             alpha,
             num_bootstrap_samples,
             bootstrap_alpha,
+            act_add,
         )
         sweep_metrics.append(SweepMetric(
             layer=layer,
@@ -298,6 +348,49 @@ def _compute_supervised_sweep_metrics(
             ci_lower=llr_shift_stats.ci_lower,
             ci_upper=llr_shift_stats.ci_upper,
             p_value=llr_shift_stats.p_value,
+        ))
+    return sweep_metrics
+
+
+def _evaluate_estimator_sweep(
+    model: PreTrainedModel,
+    experiment_config: ExperimentConfig,
+    baseline_corpora: dict[str, list[TokenizedInputs]],
+    supervised_corpora: dict[str, BatchedPairedInputs],
+    unsteered_supervised_losses: dict[str, PairedLosses],
+    layer: int,
+    pooling_type: PoolingTypeEnum,
+    rank: int,
+    estimator_name: str,
+    estimator_matrix: torch.Tensor,
+    act_add: bool,
+) -> list[SweepMetric]:
+    sweep_metrics = []
+    for alpha in tqdm(experiment_config.target_alphas, desc=f'Evaluating {estimator_name}'):
+        sweep_metrics.extend(_compute_baseline_sweep_metrics(
+            model,
+            baseline_corpora,
+            layer,
+            pooling_type,
+            rank,
+            estimator_name,
+            estimator_matrix,
+            alpha,
+            act_add,
+        ))
+        sweep_metrics.extend(_compute_supervised_sweep_metrics(
+            model,
+            supervised_corpora,
+            unsteered_supervised_losses,
+            layer,
+            pooling_type,
+            rank,
+            estimator_name,
+            estimator_matrix,
+            alpha,
+            experiment_config.num_bootstrap_samples,
+            experiment_config.bootstrap_alpha,
+            act_add,
         ))
     return sweep_metrics
 
@@ -328,10 +421,11 @@ def compute_and_save_subspace_metrics(
         for corpus_name, paired_inputs in supervised_corpora.items()
     }
 
+    evaluation_ranks = sorted(set(experiment_config.target_ranks) | {1})
     sweeps_tuples = itertools.product(
         experiment_config.target_layers,
         PoolingTypeEnum,
-        experiment_config.target_ranks,
+        evaluation_ranks,
     )
     for layer, pooling_type, rank in sweeps_tuples:
         sweep_identifier = get_sweep_identifier(layer, pooling_type, rank)
@@ -345,30 +439,20 @@ def compute_and_save_subspace_metrics(
             estimator_name = estimator_path.name.removesuffix(f'_{sweep_identifier}.pt')
             estimator_matrix = torch.load(estimator_path, weights_only=True).to(model.device, dtype=model.dtype)
 
-            for alpha in tqdm(experiment_config.target_alphas, desc=f'Evaluating {estimator_name} Estimator'):
-                sweep_metrics.extend(_compute_baseline_sweep_metrics(
-                    model,
-                    baseline_corpora,
-                    layer,
-                    pooling_type,
-                    rank,
-                    estimator_name,
-                    estimator_matrix,
-                    alpha,
-                ))
-                sweep_metrics.extend(_compute_supervised_sweep_metrics(
-                    model,
-                    supervised_corpora,
-                    unsteered_supervised_losses,
-                    layer,
-                    pooling_type,
-                    rank,
-                    estimator_name,
-                    estimator_matrix,
-                    alpha,
-                    experiment_config.num_bootstrap_samples,
-                    experiment_config.bootstrap_alpha,
-                ))
+            is_act_add = estimator_name.startswith(SingleEstimatorPrefixes.ACT_ADD)
+            sweep_metrics.extend(_evaluate_estimator_sweep(
+                model,
+                experiment_config,
+                baseline_corpora,
+                supervised_corpora,
+                unsteered_supervised_losses,
+                layer,
+                pooling_type,
+                rank,
+                estimator_name,
+                estimator_matrix,
+                act_add=is_act_add,
+            ))
                 
             del estimator_matrix
             gc.collect()

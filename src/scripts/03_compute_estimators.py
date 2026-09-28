@@ -32,16 +32,32 @@ def _save_estimators(
     estimators: dict[str, torch.Tensor],
     layer: int,
     pooling_type: PoolingTypeEnum,
-    target_ranks: list[int],
+    experiment_config: ExperimentConfig,
     out_dir: Path,
 ) -> None:
-    for rank in target_ranks:
-        for estimator_name, subspace in estimators.items():
-            rank_subspace = subspace[:, :rank].contiguous()
+    for rank in experiment_config.target_ranks:
+        for estimator_name, estimator_matrix in estimators.items():
+            if estimator_name.startswith(SingleEstimatorPrefixes.ACT_ADD):
+                continue
+            if rank > estimator_matrix.shape[1]:
+                continue
+            rank_estimator_matrix = estimator_matrix[:, :rank].contiguous()
             sweep_identifier = get_sweep_identifier(layer, pooling_type, rank)
-            out_filename = f'{estimator_name}_{sweep_identifier}.pt'
-            out_filepath = out_dir / out_filename
-            torch.save(rank_subspace, out_filepath)
+            out_filepath = out_dir / f'{estimator_name}_{sweep_identifier}.pt'
+            torch.save(rank_estimator_matrix, out_filepath)
+    act_add_sweep_identifier = get_sweep_identifier(layer, pooling_type, 1)
+    for estimator_name, estimator_matrix in estimators.items():
+        if estimator_name.startswith(SingleEstimatorPrefixes.ACT_ADD):
+            out_filepath = out_dir / f'{estimator_name}_{act_add_sweep_identifier}.pt'
+            torch.save(estimator_matrix, out_filepath)
+        else:
+            for vector_rank in experiment_config.target_act_add_ranks:
+                if vector_rank > estimator_matrix.shape[1]:
+                    continue
+                vector = estimator_matrix[:, [vector_rank - 1]].contiguous()
+                vector_name = f'{SingleEstimatorPrefixes.ACT_ADD}{vector_rank}_{estimator_name}'
+                out_filepath = out_dir / f'{vector_name}_{act_add_sweep_identifier}.pt'
+                torch.save(vector, out_filepath)
 
 
 def compute_and_save_estimators(
@@ -72,6 +88,10 @@ def compute_and_save_estimators(
                 activation_matrix,
                 max_rank,
             )
+
+            estimators[f'{SingleEstimatorPrefixes.ACT_ADD}{split_name}'] = math_utils.compute_vector_mean(
+                activation_matrix,
+            )
             
             if model_dim is None:
                 model_dim = activation_matrix.shape[-1]
@@ -92,6 +112,15 @@ def compute_and_save_estimators(
                 aae_activation_matrix,
                 sae_activation_matrix,
                 max_rank,
+            )
+
+            estimators[f'{SingleEstimatorPrefixes.SVD}{split_pair.sae_split}'] = math_utils.compute_svd_estimator(
+                sae_activation_matrix,
+                max_rank,
+            )
+
+            estimators[f'{SingleEstimatorPrefixes.ACT_ADD}{split_pair.corpus_name}'] = math_utils.compute_vector_mean(
+                aae_activation_matrix - sae_activation_matrix,
             )
 
             del aae_activation_matrix, sae_activation_matrix
@@ -146,7 +175,7 @@ def compute_and_save_estimators(
             estimators,
             layer,
             pooling_type,
-            experiment_config.target_ranks,
+            experiment_config,
             out_dir,
         )
         del estimators

@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 from typing import NamedTuple
 
 from dataclasses import dataclass
@@ -14,6 +15,7 @@ class ExperimentConfig:
 
     target_layers: list[int]
     target_ranks: list[int]
+    target_act_add_ranks: list[int]
     target_alphas: list[int]
     batch_size: int
     max_seq_len: int
@@ -67,9 +69,17 @@ class DatasetConfig:
     min_len_words: int
     max_len_words: int
 
-    skipped_data_patterns: list[str]
-    skipped_case_patterns: list[str]
-    replacement_patterns: list[tuple[str, str]]
+    skipped_data_patterns: list[str | re.Pattern]
+    skipped_case_patterns: list[str | re.Pattern]
+    replacement_patterns: list[tuple[str | re.Pattern, str]]
+
+    def __post_init__(self):
+        self.skipped_data_patterns = [re.compile(pattern) for pattern in self.skipped_data_patterns]
+        self.skipped_case_patterns = [re.compile(pattern) for pattern in self.skipped_case_patterns]
+        self.replacement_patterns = [
+            (re.compile(pattern), replacement)
+            for pattern, replacement in self.replacement_patterns
+        ]
 
 
 @dataclass
@@ -84,6 +94,7 @@ class SupervisedDatasetConfig(DatasetConfig):
 
     supervised_split_suffix: str
     testing_split_suffix: str
+    feature_indices_dict_suffix: str
 
 
 class SupervisedPair(NamedTuple):
@@ -98,13 +109,13 @@ class EstimatorData(NamedTuple):
 
 
 def get_dataset_config(
-    corpus_name: str,
+    split_name: str,
     corpus_config: dict[str, DatasetConfig],
 ) -> DatasetConfig:
-    if corpus_name in corpus_config:
-        return corpus_config[corpus_name]
-    for corpus_name_untagged, config in corpus_config.items():
-        if corpus_name.startswith(corpus_name_untagged):
+    if split_name in corpus_config:
+        return corpus_config[split_name]
+    for corpus_name, config in corpus_config.items():
+        if split_name.startswith(corpus_name):
             return config
 
 
@@ -133,6 +144,15 @@ def get_estimator_data(corpus_config: dict[str, DatasetConfig]) -> EstimatorData
     return estimator_data
 
 
+AAE_FEATURES = { # refine when able
+    'negative_concord': r"(?i)\b(?:ain'?t|don'?t|didn'?t|won'?t|can'?t|couldn'?t|never|not)\b(?:\s+\w+){0,4}\s+\b(?:nothing|nobody|nowhere|none|no)\b",
+    'habitual_be': r"(?i)\b(?:i|you|he|she|it|we|they|yall|y'all|people|everybody|somebody)\s+be\s+(?:\w+ing|like|mad|chillin'?|trippin'?|wildin'?|at\s+the|in\s+the|on\s+that)\b",
+    'completive_done': r"(?i)\b(?:done)\s+(?:told|said|seen|went|ate|took|gave|left|did|been|made|got|had|heard|broke|forgot|\w+ed)\b",
+    'unconjugated_aint': r"(?i)\bain'?t\b(?:\s+\w+){1,3}",
+}
+UNMATCHED_FEATURE_KEY = 'other'
+
+
 EXPERIMENT_CONFIG = ExperimentConfig(
     model_hf_path = 'meta-llama/Llama-3.2-3B',
     load_in_4bit = False,
@@ -140,6 +160,7 @@ EXPERIMENT_CONFIG = ExperimentConfig(
 
     target_layers = [4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26],
     target_ranks = [4],
+    target_act_add_ranks = [1, 2, 3],
     target_alphas = [-1.0, -0.75, -0.5, -0.25, 0.0, 0.25, 0.5, 0.75, 1.0],
     
     batch_size = 16,
@@ -201,6 +222,7 @@ CORPUS_CONFIG = {
         sae_split_suffix = '_sae',
         supervised_split_suffix = '_supervised',
         testing_split_suffix = '_testing',
+        feature_indices_dict_suffix = '_feature_indices',
 
         min_len_chars = 15,
         min_len_words = 5,

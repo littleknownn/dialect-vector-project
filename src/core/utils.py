@@ -29,14 +29,15 @@ class PoolingTypeEnum(StrEnum):
 class SingleEstimatorPrefixes(StrEnum):
     SVD = 'svd_'
     SUPERVISED = 'supervised_'
+    ACT_ADD = 'act_add_'
 
 
 class AggregateEstimators(StrEnum):
+    CONTROL = 'control'
     CHORDAL_MEAN_CORPORA = 'chordal_mean_corpora'
     CHORDAL_MEAN_ALL = 'chordal_mean_all'
     LEACE_CORPORA = 'leace_corpora'
     LEACE_ALL = 'leace_all'
-    CONTROL = 'control'
 
 
 class MetricTypeEnum(StrEnum):

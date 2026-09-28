@@ -8,8 +8,10 @@ from tqdm import tqdm
 import torch
 
 from src.core.config import (
+    AAE_FEATURES,
     CORPUS_CONFIG,
     EXPERIMENT_CONFIG,
+    UNMATCHED_FEATURE_KEY,
     BaselineDatasetConfig,
     CoraalSourceConfig,
     DatasetConfig,
@@ -23,6 +25,7 @@ from src.core.config import (
 from src.core.paths import PROCESSED_DATA_DIR
 from src.core.utils import (
     check_text_len_bounds,
+    save_json,
     save_jsonl,
 )
 
@@ -30,17 +33,17 @@ from src.core.utils import (
 def _clean_text(text: str, config: DatasetConfig) -> Optional[str]:
     text_lowercase = text.lower()
     for pattern in config.skipped_data_patterns:
-        if re.search(pattern, text_lowercase):
+        if pattern.search(text_lowercase):
             return None    
     
     for pattern, replacement in config.replacement_patterns:
-        text = re.sub(pattern, replacement, text)
+        text = pattern.sub(replacement, text)
 
     if not (cleaned_text := text.strip()):
         return None
     
     for pattern in config.skipped_case_patterns:
-        if re.search(pattern, cleaned_text):
+        if pattern.search(cleaned_text):
             return None
     
     return cleaned_text
@@ -221,16 +224,61 @@ def load_and_process_corpora(
     corpus_splits = _compute_corpus_splits(cleaned_corpus_data, corpus_config, experiment_config.random_seed)
     return corpus_splits
 
+
+def extract_feature_indices_dict(
+    supervised_corpus_name: str,
+    corpus_splits: dict[str, list[str]],
+    corpus_config: dict[str, DatasetConfig],
+    features_dict: dict[str, str],
+    unmatched_feature_key: str = UNMATCHED_FEATURE_KEY,
+) -> dict[str, dict[str, str]]:
+    config = corpus_config[supervised_corpus_name]
+    testing_split_key = f'{supervised_corpus_name}{config.aae_split_suffix}{config.testing_split_suffix}'
+    
+    features_dict_compiled = {
+        feature: re.compile(pattern)
+        for feature, pattern in features_dict.items()
+    }
+    feature_indices_dict = {
+        feature: {}
+        for feature in features_dict.keys()
+    }
+    feature_indices_dict[unmatched_feature_key] = {}
+    
+    for i, line in enumerate(corpus_splits[testing_split_key]):
+        matched_flag = False
+        for feature, compiled_pattern in features_dict_compiled.items():
+            if compiled_pattern.search(line.lower()):
+                feature_indices_dict[feature][str(i)] = line
+                matched_flag = True
+        if not matched_flag:
+            feature_indices_dict[unmatched_feature_key][str(i)] = line
+    return feature_indices_dict
+
 if __name__ == '__main__':
     corpus_splits = load_and_process_corpora(CORPUS_CONFIG, EXPERIMENT_CONFIG)
     for split_name, lines in corpus_splits.items():
         config = get_dataset_config(split_name, CORPUS_CONFIG)
         save_jsonl(
-                lines,
+            lines,
+            PROCESSED_DATA_DIR,
+            split_name,
+            config.min_len_chars,
+            config.min_len_words,
+            config.max_len_words,
+        )
+    for corpus_name, config in CORPUS_CONFIG.items():
+        if isinstance(config, SupervisedDatasetConfig):
+            feature_indices_dict = extract_feature_indices_dict(
+                corpus_name,
+                corpus_splits,
+                CORPUS_CONFIG,
+                AAE_FEATURES,
+            )
+            save_json(
+                feature_indices_dict,
                 PROCESSED_DATA_DIR,
-                split_name,
-                config.min_len_chars,
-                config.min_len_words,
-                config.max_len_words,
+                f'{corpus_name}{config.feature_indices_dict_suffix}',
             )
     tqdm.write('01: Corpus Processing Complete\n')
+
