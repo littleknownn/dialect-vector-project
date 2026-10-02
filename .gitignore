@@ -14,5 +14,6 @@ __pycache__/
 # Project
 scratch/
 data/
+run_data/
 models/
 outputs/

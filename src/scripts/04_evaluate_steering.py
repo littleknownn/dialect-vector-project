@@ -18,12 +18,12 @@ from transformers import (
 
 from src.core.base_model import load_base_model
 from src.core.config import (
-    BaselineDatasetConfig,
     CORPUS_CONFIG,
+    EXPERIMENT_CONFIG,
+    BaselineDatasetConfig,
     DatasetConfig,
     ExperimentConfig,
-    EXPERIMENT_CONFIG,
-    SupervisedDatasetConfig,
+    get_dataset_config,
 )
 import src.core.math_utils as math_utils
 from src.core.paths import (
@@ -33,6 +33,7 @@ from src.core.paths import (
     get_sweep_identifier,
 )
 from src.core.utils import (
+    EstimatorSteering,
     MetricTypeEnum,
     PoolingTypeEnum,
     SingleEstimatorPrefixes,
@@ -40,9 +41,6 @@ from src.core.utils import (
     load_jsonl,
     save_json,
 )
-
-
-type HiddenStateData = tuple[torch.Tensor, *tuple[Any, ...]]
 
 
 type TokenizedInputs = dict[str, torch.Tensor]
@@ -56,51 +54,6 @@ class BatchedPairedInputs(NamedTuple):
 class PairedLosses(NamedTuple):
     aae: torch.Tensor
     sae: torch.Tensor
-
-
-class EstimatorSteering:
-    def __init__(
-            self,
-            estimator_matrix: torch.Tensor,
-            layer_module: int,
-            alpha: float,
-            act_add: bool = False,
-        ):
-        self.estimator_matrix = estimator_matrix
-        self.layer_module = layer_module
-        self.alpha = alpha
-        self.act_add = act_add
-        self.forward_hook = None
-
-        if act_add:
-            assert estimator_matrix.shape[1] == 1, 'ActAdd Steering requires a Rank-1 Estimator'
-
-    def __enter__(self):
-        self.forward_hook = self.layer_module.register_forward_hook(self._hook)
-        return self
-
-    def __exit__(self, exc_type, exc, tb):
-        if self.forward_hook is not None:
-            self.forward_hook.remove()
-
-    def _hook(
-        self,
-        target_layer: nn.Module,
-        previous_layer_inputs: HiddenStateData,
-        previous_layer_outputs: torch.Tensor | HiddenStateData,
-    ) -> torch.Tensor | HiddenStateData:
-        is_output_wrapped = isinstance(previous_layer_outputs, tuple)
-        hidden_states = previous_layer_outputs[0] if is_output_wrapped else previous_layer_outputs
-
-        if self.act_add:
-            steered_hidden_states = hidden_states + self.alpha * self.estimator_matrix.T
-        else:
-            subspace_projection = (hidden_states @ self.estimator_matrix) @ self.estimator_matrix.T
-            steered_hidden_states = hidden_states + (self.alpha * subspace_projection)
-
-        if is_output_wrapped:
-            return (steered_hidden_states, *previous_layer_outputs[1:])
-        return steered_hidden_states
 
 
 def _batch_and_tokenize(
@@ -144,71 +97,72 @@ def _load_and_tokenize_baseline_corpora(
     return baseline_corpora
 
 
-def _load_and_tokenize_supervised_corpora(
+def _load_and_tokenize_supervised_corpus(
     model: PreTrainedModel,
     tokenizer: PreTrainedTokenizerBase,
+    supervised_corpus_name: str,
     corpus_config: dict[str, DatasetConfig],
     experiment_config: ExperimentConfig,
     processed_data_dir: Path,
 ) -> dict[str, BatchedPairedInputs]:
-    supervised_corpora = {}
-    for corpus_name, config in corpus_config.items():
-        if isinstance(config, SupervisedDatasetConfig):
-            aae_filepath = processed_data_dir / f'{corpus_name}{config.aae_split_suffix}{config.testing_split_suffix}.jsonl'
-            sae_filepath = processed_data_dir / f'{corpus_name}{config.sae_split_suffix}{config.testing_split_suffix}.jsonl'
-            
-            aae_lines = load_jsonl(aae_filepath)[:experiment_config.max_eval_lines]
-            sae_lines = load_jsonl(sae_filepath)[:experiment_config.max_eval_lines]
-            
-            supervised_corpora[corpus_name] = BatchedPairedInputs(
-                aae=_batch_and_tokenize(
-                    aae_lines,
-                    tokenizer,
-                    experiment_config.batch_size,
-                    experiment_config.max_seq_len,
-                    model.device,
-                ),
-                sae=_batch_and_tokenize(
-                    sae_lines,
-                    tokenizer,
-                    experiment_config.batch_size,
-                    experiment_config.max_seq_len,
-                    model.device,
-                ),
-            )
+    tokens_by_feature = {}
+    config = get_dataset_config(supervised_corpus_name, corpus_config)
 
-            feature_indices_dict_path = processed_data_dir / f'{corpus_name}{config.feature_indices_dict_suffix}.json'
-            with open(feature_indices_dict_path, 'r', encoding='utf-8') as file:
-                feature_indices_dict = json.load(file)
-            
-            for feature, idx_line_dict in feature_indices_dict.items():
-                indices = [int(str_i) for str_i in idx_line_dict.keys()]
-                
-                valid_indices = [i for i in indices if i < len(aae_lines)]
-                if not valid_indices:
-                    continue
+    aae_filepath = processed_data_dir / f'{supervised_corpus_name}{config.aae_split_suffix}{config.testing_split_suffix}.jsonl'
+    sae_filepath = processed_data_dir / f'{supervised_corpus_name}{config.sae_split_suffix}{config.testing_split_suffix}.jsonl'
 
-                feature_lines_aae = [aae_lines[i] for i in valid_indices]
-                feature_lines_sae = [sae_lines[i] for i in valid_indices]
+    aae_lines = load_jsonl(aae_filepath)[:experiment_config.max_eval_lines]
+    sae_lines = load_jsonl(sae_filepath)[:experiment_config.max_eval_lines]
+    
+    tokens_by_feature[supervised_corpus_name] = BatchedPairedInputs(
+        aae=_batch_and_tokenize(
+            aae_lines,
+            tokenizer,
+            experiment_config.batch_size,
+            experiment_config.max_seq_len,
+            model.device,
+        ),
+        sae=_batch_and_tokenize(
+            sae_lines,
+            tokenizer,
+            experiment_config.batch_size,
+            experiment_config.max_seq_len,
+            model.device,
+        ),
+    )
 
-                split_name = f'{corpus_name}_{feature}'
-                supervised_corpora[split_name] = BatchedPairedInputs(
-                    aae = _batch_and_tokenize(
-                        feature_lines_aae,
-                        tokenizer,
-                        experiment_config.batch_size,
-                        experiment_config.max_seq_len,
-                        model.device,
-                    ),
-                    sae = _batch_and_tokenize(
-                        feature_lines_sae,
-                        tokenizer,
-                        experiment_config.batch_size,
-                        experiment_config.max_seq_len,
-                        model.device,
-                    ),
-                )
-    return supervised_corpora
+    feature_indices_dict_path = processed_data_dir / f'{supervised_corpus_name}{config.feature_indices_dict_suffix}.json'
+    with open(feature_indices_dict_path, 'r', encoding='utf-8') as file:
+        feature_indices_dict = json.load(file)
+    
+    for feature, idx_line_dict in feature_indices_dict.items():
+        indices = [int(str_i) for str_i in idx_line_dict.keys()]
+        
+        valid_indices = [i for i in indices if i < len(aae_lines)]
+        if not valid_indices:
+            continue
+
+        feature_lines_aae = [aae_lines[i] for i in valid_indices]
+        feature_lines_sae = [sae_lines[i] for i in valid_indices]
+
+        split_name = f'{supervised_corpus_name}_{feature}'
+        tokens_by_feature[split_name] = BatchedPairedInputs(
+            aae = _batch_and_tokenize(
+                feature_lines_aae,
+                tokenizer,
+                experiment_config.batch_size,
+                experiment_config.max_seq_len,
+                model.device,
+            ),
+            sae = _batch_and_tokenize(
+                feature_lines_sae,
+                tokenizer,
+                experiment_config.batch_size,
+                experiment_config.max_seq_len,
+                model.device,
+            ),
+        )
+    return tokens_by_feature
 
 
 def _compute_batched_input_losses(
@@ -398,6 +352,7 @@ def _evaluate_estimator_sweep(
 def compute_and_save_subspace_metrics(
     model: PreTrainedModel,
     tokenizer: PreTrainedTokenizerBase,
+    supervised_corpus_name: str,
     corpus_config: dict[str, DatasetConfig],
     experiment_config: ExperimentConfig,
     processed_data_dir: Path,
@@ -406,10 +361,19 @@ def compute_and_save_subspace_metrics(
 ) -> None:
     tqdm.write('Tokenizing Reference Corpora...')
     baseline_corpora = _load_and_tokenize_baseline_corpora(
-        model, tokenizer, corpus_config, experiment_config, processed_data_dir
+        model,
+        tokenizer,
+        corpus_config,
+        experiment_config,
+        processed_data_dir,
     )
-    supervised_corpora = _load_and_tokenize_supervised_corpora(
-        model, tokenizer, corpus_config, experiment_config, processed_data_dir
+    supervised_corpora = _load_and_tokenize_supervised_corpus(
+        model,
+        tokenizer,
+        supervised_corpus_name,
+        corpus_config,
+        experiment_config,
+        processed_data_dir,
     )
 
     tqdm.write('Computing Unsteered Losses...')
@@ -433,6 +397,14 @@ def compute_and_save_subspace_metrics(
             continue
         tqdm.write(f'Evaluating Sweep: Layer {layer:02d}, {pooling_type} Pooling, Rank {rank}...')
 
+        supervised_act_add_norm = None
+        if rank == 1:
+            reference_filepath = estimators_dir / f'{SingleEstimatorPrefixes.ACT_ADD}{supervised_corpus_name}_{sweep_identifier}.pt'
+            if reference_filepath.exists():
+                supervised_act_add_vector = torch.load(reference_filepath, weights_only=True).to(model.device)
+                supervised_act_add_norm = torch.linalg.norm(supervised_act_add_vector)
+                del supervised_act_add_vector
+
         sweep_metrics = []
         estimator_paths = estimators_dir.glob(f'*_{sweep_identifier}.pt')
         for estimator_path in estimator_paths:
@@ -440,6 +412,11 @@ def compute_and_save_subspace_metrics(
             estimator_matrix = torch.load(estimator_path, weights_only=True).to(model.device, dtype=model.dtype)
 
             is_act_add = estimator_name.startswith(SingleEstimatorPrefixes.ACT_ADD)
+            if is_act_add and supervised_act_add_norm is not None:
+                estimator_norm = torch.linalg.norm(estimator_matrix)
+                if estimator_norm > 0:
+                    estimator_matrix *= supervised_act_add_norm / estimator_norm
+            
             sweep_metrics.extend(_evaluate_estimator_sweep(
                 model,
                 experiment_config,
@@ -468,6 +445,13 @@ def compute_and_save_subspace_metrics(
 if __name__ == '__main__':
     model, tokenizer = load_base_model(EXPERIMENT_CONFIG)
     compute_and_save_subspace_metrics(
-        model, tokenizer, CORPUS_CONFIG, EXPERIMENT_CONFIG, PROCESSED_DATA_DIR, ESTIMATORS_DIR, SWEEPS_DIR
+        model,
+        tokenizer,
+        CORPUS_CONFIG,
+        EXPERIMENT_CONFIG,
+        PROCESSED_DATA_DIR,
+        ESTIMATORS_DIR,
+        SWEEPS_DIR,
+        supervised_corpus_name='real_aae',
     )
     tqdm.write('04: Steering Evaluation Complete\n')

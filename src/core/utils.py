@@ -2,11 +2,15 @@ from enum import StrEnum
 from pathlib import Path
 import json
 from typing import (
+    Any,
     Iterable,
     NamedTuple,
     TypedDict,
     NotRequired,
 )
+
+import torch
+import torch.nn as nn
 
 
 type MetricsJson = dict[
@@ -19,6 +23,9 @@ type MetricsJson = dict[
 
 
 type GeometricSummary = list[GeometricMetricsData]
+
+
+type HiddenStateData = tuple[torch.Tensor, *tuple[Any, ...]]
 
 
 class PoolingTypeEnum(StrEnum):
@@ -99,6 +106,26 @@ class BehavioralSummary(TypedDict):
     fdr: list[FdrSummary]
 
 
+class SweepSummary(TypedDict):
+    layer: int
+    pooling_type: PoolingTypeEnum
+    rank: int
+    estimator_name: str
+    corpus_name: str
+    metric: MetricTypeEnum
+    alpha: float
+    value: float
+    p_value: float
+
+
+class VectorMagnitudeSummary(TypedDict):
+    layer: int
+    pooling_type: PoolingTypeEnum
+    rank: int
+    estimator_name: str
+    norm: float
+
+
 class EstimatorKey(NamedTuple):
     layer: int
     pooling_type: PoolingTypeEnum
@@ -113,6 +140,51 @@ class SweepKey(NamedTuple):
     estimator_name: str
     corpus_name: str
     metric: MetricTypeEnum
+
+
+class EstimatorSteering:
+    def __init__(
+            self,
+            estimator_matrix: torch.Tensor,
+            layer_module: int,
+            alpha: float,
+            act_add: bool = False,
+        ):
+        self.estimator_matrix = estimator_matrix
+        self.layer_module = layer_module
+        self.alpha = alpha
+        self.act_add = act_add
+        self.forward_hook = None
+
+        if act_add:
+            assert estimator_matrix.shape[1] == 1, 'ActAdd Steering requires a Rank-1 Estimator'
+
+    def __enter__(self):
+        self.forward_hook = self.layer_module.register_forward_hook(self._hook)
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        if self.forward_hook is not None:
+            self.forward_hook.remove()
+
+    def _hook(
+        self,
+        target_layer: nn.Module,
+        previous_layer_inputs: HiddenStateData,
+        previous_layer_outputs: torch.Tensor | HiddenStateData,
+    ) -> torch.Tensor | HiddenStateData:
+        is_output_wrapped = isinstance(previous_layer_outputs, tuple)
+        hidden_states = previous_layer_outputs[0] if is_output_wrapped else previous_layer_outputs
+
+        if self.act_add:
+            steered_hidden_states = hidden_states + self.alpha * self.estimator_matrix.T
+        else:
+            subspace_projection = (hidden_states @ self.estimator_matrix) @ self.estimator_matrix.T
+            steered_hidden_states = hidden_states + (self.alpha * subspace_projection)
+
+        if is_output_wrapped:
+            return (steered_hidden_states, *previous_layer_outputs[1:])
+        return steered_hidden_states
 
 
 def check_text_len_bounds(

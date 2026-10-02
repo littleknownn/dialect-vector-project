@@ -29,6 +29,8 @@ METRICS_DIR.mkdir(parents=True, exist_ok=True)
 
 GEOMETRIC_RESULTS_FILENAME = 'geometric_results'
 BEHAVIORAL_RESULTS_FILENAME = 'behavioral_results'
+SWEEP_RESULTS_FILENAME = 'sweep_results'
+VECTOR_MAGNITUDES_FILENAME = 'act_add_vector_magnitudes'
 
 
 def get_sweep_identifier(

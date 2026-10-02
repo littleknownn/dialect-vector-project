@@ -97,8 +97,7 @@ def compute_supervised_estimator(
 def compute_vector_mean(
     activation_matrix: torch.Tensor,
 ) -> torch.Tensor:
-    matrix_mean = activation_matrix.mean(dim=0)
-    vector_mean = F.normalize(matrix_mean, dim=0).unsqueeze(1)
+    vector_mean = activation_matrix.mean(dim=0).unsqueeze(1)
     return vector_mean
 
 

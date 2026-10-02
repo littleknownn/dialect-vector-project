@@ -23,6 +23,8 @@ from src.core.paths import (
     GEOMETRIC_RESULTS_FILENAME,
     METRICS_DIR,
     SWEEPS_DIR,
+    SWEEP_RESULTS_FILENAME,
+    VECTOR_MAGNITUDES_FILENAME,
     get_sweep_identifier,
 )
 from src.core.utils import (
@@ -32,9 +34,11 @@ from src.core.utils import (
     FdrSummary,
     GeometricMetricsData,
     GeometricSummary,
-    SweepKey,
-    PoolingTypeEnum,
     MetricTypeEnum,
+    PoolingTypeEnum,
+    SweepKey,
+    SweepSummary,
+    VectorMagnitudeSummary,
     save_json,
 )
 
@@ -198,7 +202,7 @@ def flatten_behavioral_results(behavioral_results: BehavioralResults) -> Behavio
             corpus_name=sweep_key.corpus_name,
             metric=sweep_key.metric,
             auc_pos=auc_pos,
-            auc_neg=behavioral_results.auc_neg[sweep_key]
+            auc_neg=behavioral_results.auc_neg[sweep_key],
         ))
 
     fdr = []
@@ -219,6 +223,42 @@ def flatten_behavioral_results(behavioral_results: BehavioralResults) -> Behavio
     return summary
 
 
+def flatten_sweep_metrics(
+    steering_metric_sweeps: dict[SweepKey, list[SteeringCurvePoint]],
+) -> list[SweepSummary]:
+    summary = []
+    for sweep_key, points in steering_metric_sweeps.items():
+        for point in points:
+            summary.append(SweepSummary(
+                layer=sweep_key.layer,
+                pooling_type=sweep_key.pooling_type,
+                rank=sweep_key.rank,
+                estimator_name=sweep_key.estimator_name,
+                corpus_name=sweep_key.corpus_name,
+                metric=sweep_key.metric,
+                alpha=point.alpha,
+                value=point.value,
+                p_value=point.p_value,
+            ))
+    return summary
+
+
+def compute_vector_magnitudes(
+    estimators: dict[EstimatorKey, torch.Tensor], 
+) -> list[VectorMagnitudeSummary]:
+    summary = []
+    for sweep_key, tensor in estimators.items():
+        norm = float(torch.linalg.vector_norm(tensor).item())
+        summary.append(VectorMagnitudeSummary(
+            layer=sweep_key.layer,
+            pooling_type=sweep_key.pooling_type,
+            rank=sweep_key.rank,
+            estimator_name=sweep_key.estimator_name,
+            norm=norm,
+        ))
+    return summary
+
+
 if __name__ == '__main__':
     tqdm.write('Loading Data...')
     estimators = load_estimators(ESTIMATORS_DIR, EXPERIMENT_CONFIG)
@@ -229,8 +269,12 @@ if __name__ == '__main__':
 
     geometric_summary = flatten_geometric_results(geometric_results)
     behavioral_summary = flatten_behavioral_results(behavioral_results)
+    sweep_summary = flatten_sweep_metrics(steering_metric_sweeps)
+    act_add_vector_magnitudes = compute_vector_magnitudes(estimators)
     
     save_json(geometric_summary, METRICS_DIR, GEOMETRIC_RESULTS_FILENAME)
     save_json(behavioral_summary, METRICS_DIR, BEHAVIORAL_RESULTS_FILENAME)
+    save_json(sweep_summary, METRICS_DIR, SWEEP_RESULTS_FILENAME)
+    save_json(act_add_vector_magnitudes, METRICS_DIR, VECTOR_MAGNITUDES_FILENAME)
 
     tqdm.write('05: Metric Computation Complete\n')

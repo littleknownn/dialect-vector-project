@@ -123,6 +123,16 @@ def compute_and_save_estimators(
                 aae_activation_matrix - sae_activation_matrix,
             )
 
+            estimators[f'{SingleEstimatorPrefixes.SVD}{split_pair.corpus_name}_half_1'] = math_utils.compute_svd_estimator(
+                aae_activation_matrix[:len(aae_activation_matrix) // 2],
+                max_rank,
+            )
+
+            estimators[f'{SingleEstimatorPrefixes.SVD}{split_pair.corpus_name}_half_2'] = math_utils.compute_svd_estimator(
+                aae_activation_matrix[len(aae_activation_matrix) // 2:],
+                max_rank,
+            )
+
             del aae_activation_matrix, sae_activation_matrix
 
         aae_corpora_activations_list = [

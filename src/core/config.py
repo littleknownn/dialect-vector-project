@@ -160,10 +160,10 @@ EXPERIMENT_CONFIG = ExperimentConfig(
 
     target_layers = [4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26],
     target_ranks = [4],
-    target_act_add_ranks = [1, 2, 3],
+    target_act_add_ranks = [1],
     target_alphas = [-1.0, -0.75, -0.5, -0.25, 0.0, 0.25, 0.5, 0.75, 1.0],
     
-    batch_size = 16,
+    batch_size = 32,
     max_seq_len = 64,
     max_eval_lines = 512,
     random_seed = 42,
