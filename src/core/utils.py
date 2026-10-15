@@ -34,22 +34,34 @@ class PoolingTypeEnum(StrEnum):
 
 
 class SingleEstimatorPrefixes(StrEnum):
-    SVD = 'svd_'
-    SUPERVISED = 'supervised_'
     ACT_ADD = 'act_add_'
-
-
-class AggregateEstimators(StrEnum):
-    CONTROL = 'control'
-    CHORDAL_MEAN_CORPORA = 'chordal_mean_corpora'
-    CHORDAL_MEAN_ALL = 'chordal_mean_all'
-    LEACE_CORPORA = 'leace_corpora'
-    LEACE_ALL = 'leace_all'
+    H3_CONSENSUS = 'h3_consensus_'
+    H3_POOLED = 'h3_pooled_'
 
 
 class MetricTypeEnum(StrEnum):
     LLR_SHIFT = 'llr_shift'
     PERPLEXITY = 'perplexity'
+
+
+class Q1ConsistencyLabel(StrEnum):
+    CONSISTENT = 'consistent'
+    PARTIAL = 'partial'
+    WEAK = 'weak'
+    POOLING_DEPENDENT = 'pooling_dependent'
+    
+class Q4Stratum(StrEnum):
+    IDENTICAL = 's0_identical'
+    FORMAT_ONLY = 's1_format_only'
+    ORTHOGRAPHIC = 's2_orthographic'
+    FUNCTION_WORD = 's3_function_word'
+    LEXICAL = 's4_lexical'
+
+
+class CIStats(TypedDict):
+    estimate: float
+    ci_lower: float
+    ci_upper: float
 
 
 class SweepMetric(TypedDict):
@@ -75,7 +87,7 @@ class GeometricMetricsData(TypedDict):
     rank: int
     estimator_a_name: str
     estimator_b_name: str
-    procrustes_alignment: float
+    principal_angles: float
     chordal_distances: float
 
 
@@ -118,19 +130,55 @@ class SweepSummary(TypedDict):
     p_value: float
 
 
-class VectorMagnitudeSummary(TypedDict):
-    layer: int
-    pooling_type: PoolingTypeEnum
-    rank: int
-    estimator_name: str
-    norm: float
+class H1Results(TypedDict):
+    supervised_vector_norm: float
+    floors: dict[str, list[float]]
+    pair_distances: dict[str, list[float]]
+    null_distances: list[float]
+    projection_energies: dict[str, list[float]]
 
 
-class EstimatorKey(NamedTuple):
-    layer: int
+class Q1Results(TypedDict):
+    corpus_name: str
     pooling_type: PoolingTypeEnum
-    rank: int
-    estimator_name: str
+    num_pairs: int
+    mean_projection: CIStats
+    positive_projection_ratio: CIStats
+    standardized_projection_mean: CIStats
+    label: Q1ConsistencyLabel
+    identical_pairs_median_abs_projection: float
+    other_pairs_median_abs_projection: float
+
+
+class Q4Results(TypedDict):
+    corpus_name: str
+    pooling_type: PoolingTypeEnum
+    num_pairs_by_stratum: dict[Q4Stratum, int]
+    mean_projection_by_stratum: dict[Q4Stratum, CIStats]
+    
+    group_shares: dict[str, CIStats]
+    r_squared: float
+    unique_r_squared: dict[str, CIStats]
+    contributing_groups: list[str]
+    dominating_groups: list[str]
+
+
+class PairEditData(TypedDict):
+    stratum: Q4Stratum
+    num_orthographic_edits: int
+    num_function_word_edits: int
+    num_lexical_edits: int
+    ending_changed: bool
+    case_changed: bool
+    tag_count_changed: bool
+    has_asterisk: bool
+    num_words_aae: int
+    num_words_sae: int
+
+
+class GeometricMetricsPair(NamedTuple):
+    principal_angles: float
+    chordal_distance: float
 
 
 class SweepKey(NamedTuple):
@@ -142,14 +190,38 @@ class SweepKey(NamedTuple):
     metric: MetricTypeEnum
 
 
+class Q1Thresholds(NamedTuple):
+    positive_projection_ratio: float
+    standardized_mean_ci_lower: float
+
+
+class Q1LabeledThresholds(NamedTuple):
+    consistent: Q1Thresholds
+    weak: Q1Thresholds
+
+
+class Q4GroupLabelThresholds(NamedTuple):
+    contribution_share_ci_lower: float
+    contribution_unique_r_squared_ci_lower: float
+    dominant_share: float
+
+
+class Q4TagsPerGroup(NamedTuple):
+    orthographic: list[str]
+    function_word: list[str]
+    lexical: list[str]
+    format: list[str]
+    length: list[str]
+
+
 class EstimatorSteering:
     def __init__(
-            self,
-            estimator_matrix: torch.Tensor,
-            layer_module: int,
-            alpha: float,
-            act_add: bool = False,
-        ):
+        self,
+        estimator_matrix: torch.Tensor,
+        layer_module: int,
+        alpha: float,
+        act_add: bool = False,
+    ):
         self.estimator_matrix = estimator_matrix
         self.layer_module = layer_module
         self.alpha = alpha
@@ -188,11 +260,11 @@ class EstimatorSteering:
 
 
 def check_text_len_bounds(
-        text: str, 
-        min_len_chars: int,
-        min_len_words: int,
-        max_len_words: int | None,
-    ) -> bool:
+    text: str, 
+    min_len_chars: int,
+    min_len_words: int,
+    max_len_words: int | None,
+) -> bool:
     num_chars = len(text)
     num_words = len(text.split())
     above_lower_bounds = min_len_chars <= num_chars and min_len_words <= num_words
@@ -201,13 +273,13 @@ def check_text_len_bounds(
 
 
 def save_jsonl(
-        text_iter: Iterable[str],
-        out_dir: Path,
-        out_filename: str,
-        min_len_chars: int = 0,
-        min_len_words: int = 0,
-        max_len_words: int | None = None,
-    ) -> None:
+    text_iter: Iterable[str],
+    out_dir: Path,
+    out_filename: str,
+    min_len_chars: int = 0,
+    min_len_words: int = 0,
+    max_len_words: int | None = None,
+) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     out_filename += '.jsonl'
     out_path = out_dir / out_filename
@@ -226,11 +298,19 @@ def load_jsonl(filepath: Path):
 
 
 def save_json(
-        data: dict | list,
-        out_dir: Path,
-        out_filename: str,
-        json_indent: int = 4,
-    ) -> None:
+    data: dict | list,
+    out_dir: Path,
+    out_filename: str,
+    json_indent: int = 4,
+) -> None:
     out_filepath = out_dir / f'{out_filename}.json'
     with open(out_filepath, 'w') as file:
         json.dump(data, file, indent=json_indent)
+
+
+def load_json(
+    in_dir: Path,
+    filename: str,
+) -> dict | list:
+    with open(in_dir / f'{filename}.json', 'r', encoding='utf-8') as file:
+        return json.load(file)

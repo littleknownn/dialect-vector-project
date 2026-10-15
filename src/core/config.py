@@ -5,6 +5,13 @@ from typing import NamedTuple
 from dataclasses import dataclass
 
 from src.core.paths import RAW_DATA_DIR
+from src.core.utils import (
+    PoolingTypeEnum,
+    Q1Thresholds,
+    Q1LabeledThresholds,
+    Q4GroupLabelThresholds,
+    Q4TagsPerGroup,
+)
 
 
 @dataclass
@@ -15,15 +22,31 @@ class ExperimentConfig:
 
     target_layers: list[int]
     target_ranks: list[int]
-    target_act_add_ranks: list[int]
-    target_alphas: list[int]
+    target_alphas: list[float]
+
+    primary_layer: int
+    primary_pooling_type: PoolingTypeEnum
+
+    h1_corpora: list[str]
+
+    num_equal_n_repeats: int
+    num_null_draws: int
+    num_cv_folds: int
+    q1_labeled_bounds: Q1LabeledThresholds
+
+    q4_orthographic_threshold: float
+    q4_function_words: frozenset[str]
+    q4_tags_per_group: Q4TagsPerGroup
+    q4_group_label_thresholds: Q4GroupLabelThresholds
+    q4_log_centered_features: frozenset[str]
+
     batch_size: int
     max_seq_len: int
     max_eval_lines: int
     random_seed: int
 
     num_bootstrap_samples: int
-    bootstrap_alpha: float
+    p_alpha: float
 
 
 @dataclass
@@ -72,6 +95,8 @@ class DatasetConfig:
     skipped_data_patterns: list[str | re.Pattern]
     skipped_case_patterns: list[str | re.Pattern]
     replacement_patterns: list[tuple[str | re.Pattern, str]]
+
+    sentencize: bool
 
     def __post_init__(self):
         self.skipped_data_patterns = [re.compile(pattern) for pattern in self.skipped_data_patterns]
@@ -152,16 +177,63 @@ AAE_FEATURES = { # refine when able
 }
 UNMATCHED_FEATURE_KEY = 'other'
 
-
 EXPERIMENT_CONFIG = ExperimentConfig(
     model_hf_path = 'meta-llama/Llama-3.2-3B',
     load_in_4bit = False,
     bnb_4bit_quant_type = 'nf4',
 
-    target_layers = [4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26],
+    target_layers = [14],
     target_ranks = [4],
-    target_act_add_ranks = [1],
-    target_alphas = [-1.0, -0.75, -0.5, -0.25, 0.0, 0.25, 0.5, 0.75, 1.0],
+    target_alphas = [
+        -1.0, -0.75, -0.5, -0.25, 0.0, 0.25, 0.5, 0.75, 1.0,
+    ],
+
+    primary_layer = 14,
+    primary_pooling_type = PoolingTypeEnum.LAST,
+
+    h1_corpora = [
+        'twitter_aae',
+        'aave_social_media',
+        'aave_lyrics',
+        'coraal_merged',
+        'wikitext',
+        'real_aae_aae_supervised',
+        'real_aae_sae_supervised',
+    ],
+
+    num_equal_n_repeats = 100,
+    num_null_draws = 200,
+    num_cv_folds = 5,
+    q1_labeled_bounds = Q1LabeledThresholds(
+        consistent=Q1Thresholds(
+            positive_projection_ratio=0.90,
+            standardized_mean_ci_lower=1.0,
+        ),
+        weak=Q1Thresholds(
+            positive_projection_ratio=0.70,
+            standardized_mean_ci_lower=0.5,
+        ),
+    ),
+
+    q4_orthographic_threshold = 0.75,
+    q4_function_words=frozenset('''
+        the a an is are was were be been am do does did has have had to of in on at
+        for and but that it they he she we you i not no with it's that's what who this
+        these those my your his her their our
+    '''.split()),
+    q4_tags_per_group = Q4TagsPerGroup(
+        orthographic=['num_orthographic_edits'],
+        function_word=['num_function_word_edits'],
+        lexical=['num_lexical_edits'],
+        format=['ending_changed', 'case_changed', 'tag_count_changed', 'has_asterisk'],
+        length=['num_words_aae', 'num_words_sae'],
+    ),
+    q4_group_label_thresholds = Q4GroupLabelThresholds(
+        contribution_share_ci_lower=0.10,
+        contribution_unique_r_squared_ci_lower=0.0,
+        dominant_share=0.50,
+    ),
+    q4_log_centered_features = frozenset(['num_words_aae', 'num_words_sae']),
     
     batch_size = 32,
     max_seq_len = 64,
@@ -169,7 +241,7 @@ EXPERIMENT_CONFIG = ExperimentConfig(
     random_seed = 42,
 
     num_bootstrap_samples = 2000,
-    bootstrap_alpha = 0.05,
+    p_alpha = 0.05,
 )
 
 
@@ -187,6 +259,8 @@ CORPUS_CONFIG = {
         min_len_chars = 15,
         min_len_words = 5,
         max_len_words = 35,
+
+        sentencize = False,
 
         skipped_data_patterns = [
             r'rd-',
@@ -228,6 +302,8 @@ CORPUS_CONFIG = {
         min_len_words = 5,
         max_len_words = 35,
 
+        sentencize = False,
+
         skipped_data_patterns = [],
         skipped_case_patterns = [],
         replacement_patterns = [
@@ -248,6 +324,8 @@ CORPUS_CONFIG = {
         min_len_chars = 15,
         min_len_words = 5,
         max_len_words = 35,
+
+        sentencize = False,
 
         skipped_data_patterns = [
             r'(?:^|\blyrics)(?:verse|chorus|intro|outro|hook|bridge|interlude|skit|narrator|scratches|produced|vocals sampled|beat changes)\b',
@@ -271,6 +349,8 @@ CORPUS_CONFIG = {
         min_len_chars = 15,
         min_len_words = 5,
         max_len_words = 35,
+
+        sentencize = False,
 
         skipped_data_patterns = [],
         skipped_case_patterns = [],
@@ -302,6 +382,8 @@ CORPUS_CONFIG = {
         min_len_words = 5,
         max_len_words = 35,
 
+        sentencize = False,
+
         skipped_data_patterns = [],
         skipped_case_patterns = [],
         replacement_patterns = [
@@ -325,6 +407,8 @@ CORPUS_CONFIG = {
         min_len_chars = 15,
         min_len_words = 5,
         max_len_words = 35,
+
+        sentencize = True,
 
         skipped_data_patterns = [
             r'^(?:\s*=\s*)+[^=]+(?:\s*=\s*)+\s*$',

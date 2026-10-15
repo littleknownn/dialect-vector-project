@@ -1,31 +1,83 @@
-import gc
 import itertools
 from pathlib import Path
+from typing import NamedTuple
 
 import torch
 from tqdm import tqdm
 
 from src.core.config import (
     CORPUS_CONFIG,
+    EXPERIMENT_CONFIG,
+    BaselineDatasetConfig,
     DatasetConfig,
     ExperimentConfig,
-    EXPERIMENT_CONFIG,
+    SupervisedPair,
     get_estimator_data,
 )
 import src.core.math_utils as math_utils
 from src.core.paths import (
     ACTIVATIONS_DIR,
     ESTIMATORS_DIR,
+    Q1_FOLD_IDS_PREFIX,
+    Q1_FOLD_MEAN_VECTORS_PREFIX,
+    H1_FLOORS_PREFIX,
+    H1_NULL_PREFIX,
+    H1_SVD_PREFIX,
     get_sweep_identifier,
 )
+import src.core.stats_utils as stats_utils
 from src.core.utils import (
-    AggregateEstimators,
     PoolingTypeEnum,
     SingleEstimatorPrefixes,
+    save_json,
 )
 
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+
+class SplitLists(NamedTuple):
+    supervised_pairs: list[SupervisedPair]
+    aae_corpora_splits: list[str]
+    all_eval_splits: list[str]
+
+
+def _load_activation_matrix(
+    split_name: str,
+    sweep_identifier: str,
+    in_dir: Path = ACTIVATIONS_DIR,
+) -> torch.Tensor:
+    activation_matrix = torch.load(
+        in_dir / f'{split_name}_{sweep_identifier}.pt', weights_only=True
+    ).to(device, dtype=torch.float32)
+    return activation_matrix
+
+
+def _get_split_lists(
+    corpus_config: dict[str, DatasetConfig],
+) -> SplitLists:
+    supervised_pairs, aae_corpora_splits = get_estimator_data(corpus_config)
+    supervised_aae_splits = [pair.aae_split for pair in supervised_pairs]
+    supervised_sae_splits = [pair.sae_split for pair in supervised_pairs]
+    baseline_splits = [
+        corpus_name for corpus_name, config in corpus_config.items()
+        if isinstance(config, BaselineDatasetConfig)
+    ]
+
+    all_eval_splits = (
+        supervised_aae_splits
+        + supervised_sae_splits
+        + aae_corpora_splits
+        + baseline_splits
+    )
+
+    split_lists = SplitLists(
+        supervised_pairs=supervised_pairs,
+        aae_corpora_splits=aae_corpora_splits,
+        all_eval_splits=all_eval_splits,
+
+    )
+    return split_lists
 
 
 def _save_estimators(
@@ -50,14 +102,129 @@ def _save_estimators(
         if estimator_name.startswith(SingleEstimatorPrefixes.ACT_ADD):
             out_filepath = out_dir / f'{estimator_name}_{act_add_sweep_identifier}.pt'
             torch.save(estimator_matrix, out_filepath)
-        else:
-            for vector_rank in experiment_config.target_act_add_ranks:
-                if vector_rank > estimator_matrix.shape[1]:
-                    continue
-                vector = estimator_matrix[:, [vector_rank - 1]].contiguous()
-                vector_name = f'{SingleEstimatorPrefixes.ACT_ADD}{vector_rank}_{estimator_name}'
-                out_filepath = out_dir / f'{vector_name}_{act_add_sweep_identifier}.pt'
-                torch.save(vector, out_filepath)
+
+
+def _compute_and_save_h1_tensors(
+    activations: dict[str, torch.Tensor],
+    sweep_identifier: str,
+    max_rank: int,
+    experiment_config: ExperimentConfig,
+    out_dir: Path,
+) -> None:
+    tqdm.write(f'Computing H1 Calibrations for Sweep {sweep_identifier}...')
+    torch.manual_seed(experiment_config.random_seed) #
+    activation_matrices = {
+        split_name: activations[split_name]
+        for split_name in experiment_config.h1_corpora
+    }
+
+    min_matrix_len = min(len(matrix) for matrix in activation_matrices.values())
+    min_half_len = min_matrix_len // 2
+
+    svd_tensors = {
+        corpus_name: []
+        for corpus_name in experiment_config.h1_corpora
+    }
+    floors = {
+        corpus_name: {
+            rank: []
+            for rank in range(1, max_rank + 1)
+        }
+        for corpus_name in experiment_config.h1_corpora
+    }
+
+    for _, (corpus_name, matrix) in itertools.product(
+        range(experiment_config.num_equal_n_repeats),
+        activation_matrices.items(),
+    ):
+        indices = torch.randperm(len(matrix), device=device)
+        half_1, half_2 = matrix[indices[:min_half_len]], matrix[indices[min_half_len:min_matrix_len]] #
+
+        basis_1 = math_utils.compute_svd_estimator(half_1, max_rank)
+        basis_2 = math_utils.compute_svd_estimator(half_2, max_rank)
+
+        for rank in range(1, max_rank + 1):
+            rank_basis_1 = basis_1[:, :rank].contiguous()
+            rank_basis_2 = basis_2[:, :rank].contiguous()
+            chordal_distance = math_utils.compute_geometric_metrics(rank_basis_1, rank_basis_2).chordal_distance.item()
+            floors[corpus_name][rank].append(chordal_distance)
+        svd_tensors[corpus_name].append(basis_1)
+
+    centered_pooled_activations_matrix = torch.cat([
+        matrix[:min_half_len] - matrix[:min_half_len].mean(dim=0)
+        for matrix in activation_matrices.values()
+    ])
+
+    null_tensors = [
+        math_utils.compute_matched_covariance_matrix(centered_pooled_activations_matrix, max_rank)
+        for _ in range(experiment_config.num_null_draws)
+    ]
+    torch.save(torch.stack(null_tensors), out_dir / f'{H1_NULL_PREFIX}{sweep_identifier}.pt')
+
+    for corpus_name, tensors in svd_tensors.items():
+        torch.save(torch.stack(tensors), out_dir / f'{H1_SVD_PREFIX}{corpus_name}_{sweep_identifier}.pt')
+
+    save_json(floors, out_dir, f'{H1_FLOORS_PREFIX}{sweep_identifier}')
+
+
+def _compute_pair_mean_difference_vector(
+    pairs: list[SupervisedPair],
+    activations: dict[str, torch.Tensor],
+) -> dict[str, torch.Tensor]:
+    estimators = {}
+    for pair in pairs:
+        aae_activation_matrix = activations[pair.aae_split]
+        sae_activation_matrix = activations[pair.sae_split]
+        estimators[f'{SingleEstimatorPrefixes.ACT_ADD}{pair.corpus_name}'] = math_utils.compute_mean_vector(
+            aae_activation_matrix - sae_activation_matrix,
+        )
+    return estimators
+
+
+def _compute_and_save_q1_folds(
+    supervised_pairs: list[SupervisedPair],
+    activations: dict[str, torch.Tensor],
+    sweep_identifier: str,
+    experiment_config: ExperimentConfig,
+    out_dir: Path,
+) -> None:
+    for pair in supervised_pairs:
+        difference_matrix = activations[pair.aae_split] - activations[pair.sae_split]
+        fold_ids = stats_utils.make_fold_ids(len(difference_matrix), experiment_config.num_cv_folds, experiment_config.random_seed)
+        fold_mean_vectors = stats_utils.compute_fold_excluded_mean_vectors(difference_matrix, fold_ids)
+
+        torch.save(fold_ids, out_dir / f'{Q1_FOLD_IDS_PREFIX}{pair.corpus_name}.pt')
+        torch.save(fold_mean_vectors, out_dir / f'{Q1_FOLD_MEAN_VECTORS_PREFIX}{pair.corpus_name}_{sweep_identifier}.pt')
+
+
+def _compute_h3_estimators(
+    aae_corpora_splits: list[str],
+    activations: dict[str, torch.Tensor],
+    max_rank: int,
+    random_seed: int,
+) -> dict[str, torch.Tensor]:
+    torch.manual_seed(random_seed)
+    split_svds = {
+        split_name: math_utils.compute_svd_estimator(activations[split_name], max_rank)
+        for split_name in aae_corpora_splits
+    }
+    estimators = {}
+    for held_out_split in aae_corpora_splits:
+        used_splits = [split_name for split_name in aae_corpora_splits if split_name != held_out_split]
+        estimators[f'{SingleEstimatorPrefixes.H3_CONSENSUS}{held_out_split}'] = math_utils.compute_chordal_mean_estimator(
+            svd_estimators=[split_svds[split_name] for split_name in used_splits],
+            rank=max_rank,
+        )
+        used_activations_centered = torch.cat([
+            activations[split_name] - activations[split_name].mean(dim=0)
+            for split_name in used_splits
+        ])
+        estimators[f'{SingleEstimatorPrefixes.H3_POOLED}{held_out_split}'] = math_utils.compute_svd_estimator(
+            activation_matrix=used_activations_centered,
+            rank=max_rank,
+        )
+
+    return estimators
 
 
 def compute_and_save_estimators(
@@ -66,131 +233,30 @@ def compute_and_save_estimators(
     in_dir: Path,
     out_dir: Path,
 ) -> None:
-    supervised_split_pairs, aae_corpora_splits = get_estimator_data(corpus_config)
-    supervised_aae_splits = [pair.aae_split for pair in supervised_split_pairs]
-    all_aae_splits = aae_corpora_splits + supervised_aae_splits
+    split_lists = _get_split_lists(corpus_config)
     max_rank = max(experiment_config.target_ranks)
+
     sweep_tuples = itertools.product(
         experiment_config.target_layers,
         PoolingTypeEnum,
     )
-    for layer, pooling_type in tqdm(sweep_tuples, desc='Computing Estimators'):
-        sweep_identifier = get_sweep_identifier(layer, pooling_type)
-        model_dim = None
-        estimators = {}
-        for split_name in all_aae_splits:
-            activation_matrix = torch.load(
-                in_dir / f'{split_name}_{sweep_identifier}.pt',
-                weights_only=True,
-            ).to(device, dtype=torch.float32)
-
-            estimators[f'{SingleEstimatorPrefixes.SVD}{split_name}'] = math_utils.compute_svd_estimator(
-                activation_matrix,
-                max_rank,
-            )
-
-            estimators[f'{SingleEstimatorPrefixes.ACT_ADD}{split_name}'] = math_utils.compute_vector_mean(
-                activation_matrix,
-            )
-            
-            if model_dim is None:
-                model_dim = activation_matrix.shape[-1]
-            del activation_matrix
-
-        for split_pair in supervised_split_pairs:
-            aae_activation_matrix = torch.load(
-                in_dir / f'{split_pair.aae_split}_{sweep_identifier}.pt',
-                weights_only=True,
-            ).to(device, dtype=torch.float32)
-
-            sae_activation_matrix = torch.load(
-                in_dir / f'{split_pair.sae_split}_{sweep_identifier}.pt',
-                weights_only=True,
-            ).to(device, dtype=torch.float32)
-
-            estimators[f'{SingleEstimatorPrefixes.SUPERVISED}{split_pair.corpus_name}'] = math_utils.compute_supervised_estimator(
-                aae_activation_matrix,
-                sae_activation_matrix,
-                max_rank,
-            )
-
-            estimators[f'{SingleEstimatorPrefixes.SVD}{split_pair.sae_split}'] = math_utils.compute_svd_estimator(
-                sae_activation_matrix,
-                max_rank,
-            )
-
-            estimators[f'{SingleEstimatorPrefixes.ACT_ADD}{split_pair.corpus_name}'] = math_utils.compute_vector_mean(
-                aae_activation_matrix - sae_activation_matrix,
-            )
-
-            estimators[f'{SingleEstimatorPrefixes.SVD}{split_pair.corpus_name}_half_1'] = math_utils.compute_svd_estimator(
-                aae_activation_matrix[:len(aae_activation_matrix) // 2],
-                max_rank,
-            )
-
-            estimators[f'{SingleEstimatorPrefixes.SVD}{split_pair.corpus_name}_half_2'] = math_utils.compute_svd_estimator(
-                aae_activation_matrix[len(aae_activation_matrix) // 2:],
-                max_rank,
-            )
-
-            del aae_activation_matrix, sae_activation_matrix
-
-        aae_corpora_activations_list = [
-            torch.load(
-                in_dir / f'{split_name}_{sweep_identifier}.pt',
-                weights_only=True,
-            ).to(device, dtype=torch.float32)
-            for split_name in aae_corpora_splits
-        ]
-        estimators[AggregateEstimators.LEACE_CORPORA] = math_utils.compute_leace_estimator(
-            aae_corpora_activations_list,
-            max_rank,
-        )
-
-        all_aae_splits_activations_list = [
-            torch.load(
-                in_dir / f'{split_name}_{sweep_identifier}.pt',
-                weights_only=True,
-            ).to(device, dtype=torch.float32)
-            for split_name in all_aae_splits
-        ]
-        estimators[AggregateEstimators.LEACE_ALL] = math_utils.compute_leace_estimator(
-            all_aae_splits_activations_list,
-            max_rank,
-        )
-
-        aae_corpora_svd_estimator_list = [
-            estimators[f'{SingleEstimatorPrefixes.SVD}{split_name}'] for split_name in aae_corpora_splits
-        ]
-        estimators[AggregateEstimators.CHORDAL_MEAN_CORPORA] = math_utils.compute_chordal_mean_estimator(
-            aae_corpora_svd_estimator_list,
-            max_rank,
-        )
-
-        all_aae_splits_svd_estimator_list = [
-            estimators[f'{SingleEstimatorPrefixes.SVD}{split_name}'] for split_name in all_aae_splits
-        ]
-        estimators[AggregateEstimators.CHORDAL_MEAN_ALL] = math_utils.compute_chordal_mean_estimator(
-            all_aae_splits_svd_estimator_list,
-            max_rank,
-        )
-
-        estimators[AggregateEstimators.CONTROL] = math_utils.compute_control_estimator(
-            model_dim,
-            max_rank,
-            device,
-        )
+    for layer, pooling_type in tqdm(sweep_tuples, desc='Computing Estimators', leave=True):
+        sweep_identifier = get_sweep_identifier(layer, pooling_type)        
+        activations = {
+            split_name: _load_activation_matrix(split_name, sweep_identifier, in_dir)
+            for split_name in split_lists.all_eval_splits
+        }
         
-        _save_estimators(
-            estimators,
-            layer,
-            pooling_type,
-            experiment_config,
-            out_dir,
-        )
-        del estimators
-        gc.collect()
-        torch.cuda.empty_cache()
+        if layer == experiment_config.primary_layer:
+            _compute_and_save_h1_tensors(activations, sweep_identifier, max_rank, experiment_config, out_dir)
+        _compute_and_save_q1_folds(split_lists.supervised_pairs, activations, sweep_identifier, experiment_config, out_dir)
+
+        estimators = {}
+        estimators |= _compute_pair_mean_difference_vector(split_lists.supervised_pairs, activations)
+        estimators |= _compute_h3_estimators(split_lists.aae_corpora_splits, activations, max_rank, random_seed=experiment_config.random_seed)
+        _save_estimators(estimators, layer, pooling_type, experiment_config, out_dir)
+
+        del activations, estimators
 
 
 if __name__ == '__main__':

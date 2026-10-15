@@ -27,10 +27,27 @@ SWEEPS_DIR.mkdir(parents=True, exist_ok=True)
 METRICS_DIR = DATA_DIR / '06_metrics'
 METRICS_DIR.mkdir(parents=True, exist_ok=True)
 
-GEOMETRIC_RESULTS_FILENAME = 'geometric_results'
+FIGURES_DIR = DATA_DIR / '07_figures'
+FIGURES_DIR.mkdir(parents=True, exist_ok=True)
+
+
 BEHAVIORAL_RESULTS_FILENAME = 'behavioral_results'
 SWEEP_RESULTS_FILENAME = 'sweep_results'
-VECTOR_MAGNITUDES_FILENAME = 'act_add_vector_magnitudes'
+H1_RESULTS_FILENAME = 'h1_results'
+
+
+H1_SVD_PREFIX = 'h1_svd_'
+H1_NULL_PREFIX = 'h1_null_'
+H1_FLOORS_PREFIX = 'h1_floors_'
+
+PAIR_EDIT_DATA_PREFIX = 'q4_pair_edit_data_'
+
+Q1_FOLD_IDS_PREFIX = 'q1_fold_ids_'
+Q1_FOLD_MEAN_VECTORS_PREFIX = 'q1_fold_mean_vectors_'
+Q1_PROJECTIONS_PREFIX = 'q1_projections_'
+Q1_RESULTS_PREFIX = 'q1_results_'
+
+Q4_RESULTS_PREFIX = 'q4_results_'
 
 
 def get_sweep_identifier(
