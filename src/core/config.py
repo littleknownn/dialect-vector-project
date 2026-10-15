@@ -5,12 +5,14 @@ from typing import NamedTuple
 from dataclasses import dataclass
 
 from src.core.paths import RAW_DATA_DIR
+import src.core.text_rules as text_rules
 from src.core.utils import (
     PoolingTypeEnum,
     Q1Thresholds,
     Q1LabeledThresholds,
     Q4GroupLabelThresholds,
     Q4TagsPerGroup,
+    SplitSuffixes,
 )
 
 
@@ -40,6 +42,7 @@ class ExperimentConfig:
     q4_group_label_thresholds: Q4GroupLabelThresholds
     q4_log_centered_features: frozenset[str]
 
+    corpus_split_size: int
     batch_size: int
     max_seq_len: int
     max_eval_lines: int
@@ -82,9 +85,10 @@ class RealAaeSourceConfig:
     
     aae_col_idx: int
     sae_col_idx: int
+    aae_back_col_idx: int
 
 
-@dataclass
+@dataclass(kw_only=True)
 class DatasetConfig:
     source_config: CoraalSourceConfig | GithubSourceConfig | HFSourceConfig | RealAaeSourceConfig
 
@@ -97,6 +101,7 @@ class DatasetConfig:
     replacement_patterns: list[tuple[str | re.Pattern, str]]
 
     sentencize: bool
+    pool_size: int | None = None
 
     def __post_init__(self):
         self.skipped_data_patterns = [re.compile(pattern) for pattern in self.skipped_data_patterns]
@@ -114,12 +119,7 @@ class BaselineDatasetConfig(DatasetConfig):
 
 @dataclass
 class SupervisedDatasetConfig(DatasetConfig):
-    aae_split_suffix: str
-    sae_split_suffix: str
-
-    supervised_split_suffix: str
-    testing_split_suffix: str
-    feature_indices_dict_suffix: str
+    pass
 
 
 class SupervisedPair(NamedTuple):
@@ -155,8 +155,8 @@ def get_estimator_data(corpus_config: dict[str, DatasetConfig]) -> EstimatorData
             supervised_split_pairs.append(
                 SupervisedPair(
                     corpus_name = corpus_name,
-                    aae_split = f'{corpus_name}{config.aae_split_suffix}{config.supervised_split_suffix}',
-                    sae_split = f'{corpus_name}{config.sae_split_suffix}{config.supervised_split_suffix}',
+                    aae_split = f'{corpus_name}{SplitSuffixes.AAE}{SplitSuffixes.SUPERVISED}',
+                    sae_split = f'{corpus_name}{SplitSuffixes.SAE}{SplitSuffixes.SUPERVISED}',
                 )
             )
         else:
@@ -169,20 +169,12 @@ def get_estimator_data(corpus_config: dict[str, DatasetConfig]) -> EstimatorData
     return estimator_data
 
 
-AAE_FEATURES = { # refine when able
-    'negative_concord': r"(?i)\b(?:ain'?t|don'?t|didn'?t|won'?t|can'?t|couldn'?t|never|not)\b(?:\s+\w+){0,4}\s+\b(?:nothing|nobody|nowhere|none|no)\b",
-    'habitual_be': r"(?i)\b(?:i|you|he|she|it|we|they|yall|y'all|people|everybody|somebody)\s+be\s+(?:\w+ing|like|mad|chillin'?|trippin'?|wildin'?|at\s+the|in\s+the|on\s+that)\b",
-    'completive_done': r"(?i)\b(?:done)\s+(?:told|said|seen|went|ate|took|gave|left|did|been|made|got|had|heard|broke|forgot|\w+ed)\b",
-    'unconjugated_aint': r"(?i)\bain'?t\b(?:\s+\w+){1,3}",
-}
-UNMATCHED_FEATURE_KEY = 'other'
-
 EXPERIMENT_CONFIG = ExperimentConfig(
     model_hf_path = 'meta-llama/Llama-3.2-3B',
     load_in_4bit = False,
     bnb_4bit_quant_type = 'nf4',
 
-    target_layers = [14],
+    target_layers = [4, 8, 14, 20, 24],
     target_ranks = [4],
     target_alphas = [
         -1.0, -0.75, -0.5, -0.25, 0.0, 0.25, 0.5, 0.75, 1.0,
@@ -234,13 +226,14 @@ EXPERIMENT_CONFIG = ExperimentConfig(
         dominant_share=0.50,
     ),
     q4_log_centered_features = frozenset(['num_words_aae', 'num_words_sae']),
-    
+
+    corpus_split_size = 3_782,
     batch_size = 32,
     max_seq_len = 64,
     max_eval_lines = 512,
     random_seed = 42,
 
-    num_bootstrap_samples = 2000,
+    num_bootstrap_samples = 10_000,
     p_alpha = 0.05,
 )
 
@@ -261,6 +254,7 @@ CORPUS_CONFIG = {
         max_len_words = 35,
 
         sentencize = False,
+        pool_size = 40_000,
 
         skipped_data_patterns = [
             r'rd-',
@@ -290,13 +284,8 @@ CORPUS_CONFIG = {
             delimiter = ',',
             aae_col_idx = 0,
             sae_col_idx = 1,
+            aae_back_col_idx=2,
         ),
-
-        aae_split_suffix = '_aae',
-        sae_split_suffix = '_sae',
-        supervised_split_suffix = '_supervised',
-        testing_split_suffix = '_testing',
-        feature_indices_dict_suffix = '_feature_indices',
 
         min_len_chars = 15,
         min_len_words = 5,
@@ -310,13 +299,13 @@ CORPUS_CONFIG = {
             (r'(?:http|www\.)\S+', ''),
             (r'^RT\s+', ''),
             (r'&amp;|&lt;|&gt;', ''),
-            (r'@\w+', '<Name>'),
+            (r'@\w+', text_rules.MENTION_PLACEHOLDER),
             (r'\s+', ' '),
         ],
     ),
 
     'aave_lyrics': DatasetConfig(
-        GithubSourceConfig(
+        source_config = GithubSourceConfig(
             git_url = 'https://raw.githubusercontent.com/jazmiahenry/aave_corpora/refs/heads/main/corpora/lyrics_corpora.txt',
             delimiter = '\n',
         ),
@@ -341,7 +330,7 @@ CORPUS_CONFIG = {
     ),
 
     'aave_social_media': DatasetConfig(
-        GithubSourceConfig(
+        source_config = GithubSourceConfig(
             git_url = 'https://raw.githubusercontent.com/jazmiahenry/aave_corpora/refs/heads/main/corpora/social_media_corpora.txt',
             delimiter = '\n',
         ),
@@ -358,7 +347,7 @@ CORPUS_CONFIG = {
             (r'(?:http|www\.)\S+', ''),
             (r'\bRT\b\s*:?\s*', ''),
             (r'&amp;|&lt;|&gt;', ''),
-            (r'(?:^|\s)_[\w]+', ' <Name> '),
+            (r'(?:^|\s)_[\w]+', f' {text_rules.MENTION_PLACEHOLDER} '),
             (
                 r'[\U0001F1E6-\U0001F1FF'
                 r'\U0001F300-\U0001F9FF'
@@ -390,14 +379,14 @@ CORPUS_CONFIG = {
             (r'(?:http|www\.)\S+', ''),
             (r'^RT\s+', ''),
             (r'&amp;|&lt;|&gt;', ''),
-            (r'@\w+', '<Name>'),
+            (r'@\w+', text_rules.MENTION_PLACEHOLDER),
             (r'\\u[0-9a-fA-F]{4}', ''),
             (r'\s+', ' '),
         ],
     ),
 
     'wikitext': BaselineDatasetConfig(
-        HFSourceConfig(
+        source_config = HFSourceConfig(
             hf_path = 'wikitext',
             hf_name = 'wikitext-2-raw-v1',
             split = 'test',

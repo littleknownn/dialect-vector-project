@@ -24,7 +24,7 @@ def load_pair_edit_data(
     corpus_name: str,
     metrics_dir: Path = METRICS_DIR,
 ) -> list[PairEditData]:
-    return load_json(metrics_dir, f'{PAIR_EDIT_DATA_PREFIX}{corpus_name}')
+    return load_json(metrics_dir / f'{PAIR_EDIT_DATA_PREFIX}{corpus_name}.json')
 
 
 def load_q1_projections(
@@ -45,7 +45,7 @@ def load_q1_results(
     metrics_dir: Path = METRICS_DIR,
 ) -> Q1Results:
     sweep_identifier = get_sweep_identifier(layer, pooling_type)
-    results = load_json(metrics_dir, f'{Q1_RESULTS_PREFIX}{corpus_name}_{sweep_identifier}')
+    results = load_json(metrics_dir / f'{Q1_RESULTS_PREFIX}{corpus_name}_{sweep_identifier}.json')
     return results
 
 
@@ -56,5 +56,5 @@ def load_q4_results(
     metrics_dir: Path = METRICS_DIR,
 ) -> Q4Results:
     sweep_identifier = get_sweep_identifier(layer, pooling_type)
-    results = load_json(metrics_dir, f'{Q4_RESULTS_PREFIX}{corpus_name}_{sweep_identifier}')
+    results = load_json(metrics_dir / f'{Q4_RESULTS_PREFIX}{corpus_name}_{sweep_identifier},json')
     return results

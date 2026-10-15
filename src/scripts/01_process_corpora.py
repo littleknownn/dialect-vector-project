@@ -1,6 +1,8 @@
 import csv
+import itertools
+from pathlib import Path
 import re
-from typing import Optional
+from typing import NamedTuple
 
 from datasets import load_dataset
 import requests
@@ -9,11 +11,8 @@ from tqdm import tqdm
 import torch
 
 from src.core.config import (
-    AAE_FEATURES,
     CORPUS_CONFIG,
     EXPERIMENT_CONFIG,
-    UNMATCHED_FEATURE_KEY,
-    BaselineDatasetConfig,
     CoraalSourceConfig,
     DatasetConfig,
     ExperimentConfig,
@@ -23,31 +22,40 @@ from src.core.config import (
     SupervisedDatasetConfig,
     get_dataset_config,
 )
-from src.core.paths import PROCESSED_DATA_DIR
+from src.core.paths import (
+    PROCESSED_DATA_DIR,
+    PROCESSING_LOG_FILENAME,
+)
+import src.core.text_utils as text_utils
+import src.core.text_rules as text_rules
 from src.core.utils import (
+    LinesProcessingCounts,
+    PairedCorpusProcessingCounts,
+    PairMetadata,
+    ProcessingLog,
+    SplitSuffixes,
     check_text_len_bounds,
     save_json,
     save_jsonl,
 )
 
 
-def _clean_text(text: str, config: DatasetConfig) -> Optional[str]:
-    text_lowercase = text.lower()
-    for pattern in config.skipped_data_patterns:
-        if pattern.search(text_lowercase):
-            return None    
-    
-    for pattern, replacement in config.replacement_patterns:
-        text = pattern.sub(replacement, text)
+class PairedCorpusData(NamedTuple):
+    aae_lines: list[str]
+    sae_lines: list[str]
+    aae_back_lines: list[str]
+    pair_metadata: list[PairMetadata]
+    num_rows: int
 
-    if not (cleaned_text := text.strip()):
-        return None
-    
-    for pattern in config.skipped_case_patterns:
-        if pattern.search(cleaned_text):
-            return None
-    
-    return cleaned_text
+
+class ProcessedCorpora(NamedTuple):
+    splits: dict[str, list]
+    processing_log: ProcessingLog
+
+
+class DroppedSplitsSummary(NamedTuple):
+    splits_after_drop: dict[str, list[str | PairMetadata]]
+    num_dropped_by_split: dict[str, int]
 
 
 def _process_coraal_lines(lines: list[str], config: DatasetConfig) -> list[str]:
@@ -58,7 +66,7 @@ def _process_coraal_lines(lines: list[str], config: DatasetConfig) -> list[str]:
     def flush_utterance():
         if current_utterance:
             combined_utterance = ' '.join(current_utterance)
-            if (clean_utterance := _clean_text(combined_utterance, config)):
+            if (clean_utterance := text_utils.clean_corpus_text(combined_utterance, config)):
                 utterances.append(clean_utterance)
             current_utterance.clear()
 
@@ -101,25 +109,51 @@ def _process_coraal_dataset(config: DatasetConfig) -> list[str]:
     return cleaned_lines
 
 
-def _process_realaae_dataset(config: DatasetConfig) -> tuple[list[str], list[str]]:
-    cleaned_lines_aae, cleaned_lines_sae = [], []
-    dataset_path = next(config.source_config.in_dir.glob('*.csv'))
-    with open(dataset_path, mode='r', encoding='utf-8', errors='ignore') as dataset_file:
+def _process_realaae_dataset(config: SupervisedDatasetConfig) -> PairedCorpusData:
+    aae_lines, sae_lines, aae_back_lines, pair_metadata = [], [], [], []
+    dataset_filepath = next(config.source_config.in_dir.glob('*.csv'))
+    with open(dataset_filepath, 'r', encoding='utf-8', errors='ignore') as dataset_file:
         csv_reader = csv.reader(dataset_file, delimiter=config.source_config.delimiter)
         if config.source_config.header:
             next(csv_reader)
-        for row in csv_reader:
-            clean_row_aae = _clean_text(row[config.source_config.aae_col_idx], config)
-            clean_row_sae = _clean_text(row[config.source_config.sae_col_idx], config)
-            if (
-                clean_row_aae and clean_row_sae
-                and check_text_len_bounds(clean_row_aae, config.min_len_chars, config.min_len_words, config.max_len_words)
-                and check_text_len_bounds(clean_row_sae, config.min_len_chars, config.min_len_words, config.max_len_words)
-            ):
-                cleaned_lines_aae.append(clean_row_aae)
-                cleaned_lines_sae.append(clean_row_sae)
-    return cleaned_lines_aae, cleaned_lines_sae
+        rows = list(csv_reader)
+    
+    for row_idx, row in enumerate(rows):
+        aae_row = row[config.source_config.aae_col_idx]
+        sae_row = row[config.source_config.sae_col_idx]
+        if not (
+            (clean_aae_row := text_utils.clean_corpus_text(aae_row, config))
+            and (clean_sae_row := text_utils.clean_corpus_text(sae_row, config))
+            and check_text_len_bounds(clean_aae_row, config.min_len_chars, config.min_len_words, config.max_len_words)
+            and check_text_len_bounds(clean_sae_row, config.min_len_chars, config.min_len_words, config.max_len_words)
+        ):
+            continue
+        aae_back_row = row[config.source_config.aae_back_col_idx]
+        clean_aae_back_row = text_utils.clean_corpus_text(aae_back_row, config) or ''
 
+        aae_lines.append(clean_aae_row)
+        sae_lines.append(clean_sae_row)
+        aae_back_lines.append(clean_aae_back_row)
+
+        is_sae_typography_normalized = sae_row != sae_row.translate(text_rules.CLEANUP_REPLACEMENT_MAP)
+        is_aae_back_typography_normalized = aae_back_row != aae_back_row.translate(text_rules.CLEANUP_REPLACEMENT_MAP)
+        is_aae_back_valid = check_text_len_bounds(clean_aae_back_row, config.min_len_chars, config.min_len_words, config.max_len_words)
+        
+        pair_metadata.append(PairMetadata(
+            row_idx=row_idx,
+            is_sae_typography_normalized=is_sae_typography_normalized,
+            is_aae_back_typography_normalized=is_aae_back_typography_normalized,
+            is_aae_back_valid=is_aae_back_valid,
+        ))
+
+    paired_corpus_data = PairedCorpusData(
+        aae_lines,
+        sae_lines,
+        aae_back_lines,
+        pair_metadata,
+        num_rows=len(rows),
+    )
+    return paired_corpus_data
 
 def _process_hf_dataset(
         config: DatasetConfig,
@@ -133,7 +167,7 @@ def _process_hf_dataset(
 
     for row in tqdm(dataset):
         text = row[config.source_config.text_col]
-        if clean_text := _clean_text(text, config):
+        if clean_text := text_utils.clean_corpus_text(text, config):
             if config.sentencize:
                 cleaned_lines.extend([sent.text for sent in sentencizer(clean_text).sents])
             else:
@@ -148,153 +182,217 @@ def _process_gh_dataset(config: DatasetConfig) -> list[str]:
     cleaned_lines = [
         cleaned_line
         for line in tqdm(lines)
-        if (cleaned_line := _clean_text(line, config))
+        if (cleaned_line := text_utils.clean_corpus_text(line, config))
     ]
     return cleaned_lines
 
 
 def _compute_corpus_splits(
-        corpus_data: dict[str, list[str]],
-        corpus_config: dict[str, DatasetConfig],
-        seed: int
-    ) -> dict[str, list[str]]:
-    min_corpus_len = min(
-        len(lines)
-        for split_name, lines in corpus_data.items()
-        if not isinstance(get_dataset_config(split_name, corpus_config), BaselineDatasetConfig)
-    )
-    permutation_generator = torch.Generator().manual_seed(seed)
-
+    corpus_data: dict[str, list[str | PairMetadata]],
+    corpus_config: dict[str, DatasetConfig],
+    split_size: int,
+    seed: int,
+) -> dict[str, list[str | PairMetadata]]:
     corpus_splits = {}
     permuted_indices_by_dataset = {}
-
     for split_name, lines in corpus_data.items():
         config = get_dataset_config(split_name, corpus_config)
-        config_key = id(config)
-        if config_key not in permuted_indices_by_dataset:
-            num_indices = len(lines)
-            permuted_indices_by_dataset[config_key] = torch.randperm(num_indices, generator=permutation_generator).tolist()
-        permuted_indices = permuted_indices_by_dataset[config_key]
+        is_supervised = isinstance(config, SupervisedDatasetConfig)
+        min_num_lines = 2 * split_size if is_supervised else split_size
+        num_lines = len(lines)
+        if num_lines < min_num_lines:
+            raise ValueError(f'{split_name} has {num_lines} lines but needs minimum {min_num_lines}')
 
-        if isinstance(config, BaselineDatasetConfig):
-            corpus_splits[split_name] = [lines[i] for i in permuted_indices[:min_corpus_len]]
-        elif isinstance(config, SupervisedDatasetConfig):
-            permuted_supervised_lines = [lines[i] for i in permuted_indices[:min_corpus_len]]
-            permuted_testing_lines = [lines[i] for i in permuted_indices[min_corpus_len:min_corpus_len * 2]]
+        config_id = id(config)
+        if config_id not in permuted_indices_by_dataset:
+            generator = torch.Generator().manual_seed(seed)
+            permuted_indices_by_dataset[config_id] = torch.randperm(num_lines, generator=generator).tolist()
+        permuted_lines = [lines[i] for i in permuted_indices_by_dataset[config_id]]
 
-            corpus_splits[f'{split_name}{config.supervised_split_suffix}'] = permuted_supervised_lines
-            corpus_splits[f'{split_name}{config.testing_split_suffix}'] = permuted_testing_lines
+        if is_supervised:
+            corpus_splits[f'{split_name}{SplitSuffixes.SUPERVISED}'] = permuted_lines[:split_size]
+            corpus_splits[f'{split_name}{SplitSuffixes.TESTING}'] = permuted_lines[split_size:2 * split_size]
+            corpus_splits[f'{split_name}{SplitSuffixes.RESERVE}'] = permuted_lines[2 * split_size:]
         else:
-            corpus_splits[split_name] = [lines[i] for i in permuted_indices[:min_corpus_len]]
+            corpus_splits[split_name] = permuted_lines[:split_size]
+            if config.pool_size is not None:
+                corpus_splits[f'{split_name}{SplitSuffixes.POOL}'] = permuted_lines[:config.pool_size]
+        
     return corpus_splits
+
+
+def _compute_stripped_splits(
+    corpus_splits: dict[str, list[str | PairMetadata]],
+    corpus_name: str,
+) -> dict[str, list[str]]:
+    stripped_splits = {}
+    for dialect_suffix, split_suffix in itertools.product(
+        (SplitSuffixes.AAE, SplitSuffixes.SAE),
+        (SplitSuffixes.SUPERVISED, SplitSuffixes.TESTING),
+    ):
+        split_name = f'{corpus_name}{dialect_suffix}{split_suffix}'
+        stripped_splits[f'{split_name}{SplitSuffixes.STRIPPED}'] = [
+            text_rules.TERMINAL_PUNCTUATION_PATTERN.sub('', line.strip())
+            for line in corpus_splits[split_name]
+        ]
+    return stripped_splits
+
+
+def _drop_sae_artifact_pairs(
+    corpus_splits: dict[str, list[str | PairMetadata]],
+    corpus_name: str,
+) -> DroppedSplitsSummary:
+    paired_column_suffixes = (
+        SplitSuffixes.AAE,
+        SplitSuffixes.SAE,
+        SplitSuffixes.AAE_BACK,
+        SplitSuffixes.PAIR_METADATA,
+    )
+    splits_after_drop = {}
+    num_dropped_by_split = {}
+    for split_suffix in (SplitSuffixes.SUPERVISED, SplitSuffixes.TESTING, SplitSuffixes.RESERVE):
+        sae_lines = corpus_splits[f'{corpus_name}{SplitSuffixes.SAE}{split_suffix}']
+        kept_indices = [
+            i for i, line in enumerate(sae_lines)
+            if not text_rules.SAE_ARTIFACT_PATTERN.search(line)
+        ]
+        for col_suffix in paired_column_suffixes:
+            split_name = f'{corpus_name}{col_suffix}{split_suffix}'
+            splits_after_drop[split_name] = [corpus_splits[split_name][i] for i in kept_indices]
+        num_dropped_by_split[split_suffix] = len(sae_lines) - len(kept_indices)
+
+    dropped_splits_summary = DroppedSplitsSummary(
+        splits_after_drop,
+        num_dropped_by_split,
+    )
+    return dropped_splits_summary
 
 
 def load_and_process_corpora(
     corpus_config: dict[str, DatasetConfig],
     experiment_config: ExperimentConfig,
-):
-    real_aae_name, real_aae_config = next(
-        (
-            (corpus_name, config)
-            for corpus_name, config in corpus_config.items()
-            if isinstance(config.source_config, RealAaeSourceConfig)
-        ),
-        (None, None),
-    )
-
+) -> ProcessedCorpora:
+    paired_corpus_config = {
+        corpus_name: config for corpus_name, config in corpus_config.items()
+        if isinstance(config, SupervisedDatasetConfig)
+    }
     corpus_data = {}
+    paired_corpus_counts, single_corpus_counts = {}, {}
     seen_lines = set()
-    
-    if real_aae_name:
-        cleaned_aae, cleaned_sae = _process_realaae_dataset(real_aae_config)
-        seen_lines.update(line.lower() for line in cleaned_aae)
 
-        corpus_data[f'{real_aae_name}{real_aae_config.aae_split_suffix}'] = cleaned_aae
-        corpus_data[f'{real_aae_name}{real_aae_config.sae_split_suffix}'] = cleaned_sae
+    for corpus_name, config in paired_corpus_config.items():
+        tqdm.write(f'Processing {corpus_name} Data...')
+        if not isinstance(config.source_config, RealAaeSourceConfig):
+            raise ValueError(f'Configure {corpus_name} SourceConfig object')
+        paired_corpus_data = _process_realaae_dataset(config)
+        seen_lines |= {line.lower() for line in paired_corpus_data.aae_lines}
 
-    for corpus_name, config in CORPUS_CONFIG.items():
+        corpus_data[f'{corpus_name}{SplitSuffixes.AAE}'] = paired_corpus_data.aae_lines
+        corpus_data[f'{corpus_name}{SplitSuffixes.SAE}'] = paired_corpus_data.sae_lines
+        corpus_data[f'{corpus_name}{SplitSuffixes.AAE_BACK}'] = paired_corpus_data.aae_back_lines
+        corpus_data[f'{corpus_name}{SplitSuffixes.PAIR_METADATA}'] = paired_corpus_data.pair_metadata
+
+        num_aae_back_invalid = sum(not metadata['is_aae_back_valid'] for metadata in paired_corpus_data.pair_metadata)
+        paired_corpus_counts[corpus_name] = PairedCorpusProcessingCounts(
+            num_rows=paired_corpus_data.num_rows,
+            num_pairs_kept=len(paired_corpus_data.aae_lines),
+            num_aae_back_invalid=num_aae_back_invalid,
+            num_dropped_by_split={}
+        )
+
+    for corpus_name, config in corpus_config.items():
+        if corpus_name in paired_corpus_config:
+            continue
         tqdm.write(f'Processing {corpus_name} Data...')
 
-        if isinstance(config.source_config, RealAaeSourceConfig):
-            continue
-        elif isinstance(config.source_config, CoraalSourceConfig):
+        if isinstance(config.source_config, CoraalSourceConfig):
             cleaned_lines = _process_coraal_dataset(config)
         elif isinstance(config.source_config, HFSourceConfig):
             cleaned_lines = _process_hf_dataset(config)
         elif isinstance(config.source_config, GithubSourceConfig):
             cleaned_lines = _process_gh_dataset(config)
 
-        corpus_lines = []
+        lines = []
+        num_out_of_bounds, num_duplicates = 0, 0
         for line in cleaned_lines:
-            line_lower = line.lower()
-            if (
-                line_lower not in seen_lines
-                and check_text_len_bounds(line, config.min_len_chars, config.min_len_words, config.max_len_words)
-            ):
-                corpus_lines.append(line)
-                seen_lines.add(line_lower)
+            if not check_text_len_bounds(line, config.min_len_chars, config.min_len_words, config.max_len_words):
+                num_out_of_bounds += 1
+                continue
+            if (line_lower := line.lower()) in seen_lines:
+                num_duplicates += 1
+                continue
+            lines.append(line)
+            seen_lines.add(line_lower)
 
-        corpus_data[corpus_name] = corpus_lines
+        corpus_data[corpus_name] = lines
+        single_corpus_counts[corpus_name] = LinesProcessingCounts(
+            num_cleaned=len(cleaned_lines),
+            num_out_of_bounds=num_out_of_bounds,
+            num_duplicates=num_duplicates,
+            num_kept=len(lines)
+        )
 
-    tqdm.write('Truncating Corpora...')
-    corpus_splits = _compute_corpus_splits(corpus_data, corpus_config, experiment_config.random_seed)
-    return corpus_splits
+    tqdm.write('Splitting Corpora...')
+    corpus_splits = _compute_corpus_splits(corpus_data, corpus_config, experiment_config.corpus_split_size, experiment_config.random_seed)
+    for corpus_name in paired_corpus_config:
+        dropped_splits_summary = _drop_sae_artifact_pairs(corpus_splits, corpus_name)
+        corpus_splits |= dropped_splits_summary.splits_after_drop
+        paired_corpus_counts[corpus_name]['num_dropped_by_split'] = dropped_splits_summary.num_dropped_by_split
+        corpus_splits |= _compute_stripped_splits(corpus_splits, corpus_name)
+
+    split_sizes = {split_name: len(lines) for split_name, lines in corpus_splits.items()}
+    processing_log = ProcessingLog(
+        paired_corpus_counts=paired_corpus_counts,
+        single_corpus_counts=single_corpus_counts,
+        split_sizes=split_sizes,
+    )
+    processed_corpora = ProcessedCorpora(corpus_splits, processing_log)
+    return processed_corpora
 
 
 def extract_feature_indices_dict(
     supervised_corpus_name: str,
     corpus_splits: dict[str, list[str]],
-    corpus_config: dict[str, DatasetConfig],
-    features_dict: dict[str, str],
-    unmatched_feature_key: str = UNMATCHED_FEATURE_KEY,
+    feature_patterns_dict: dict[str, re.Pattern] = text_rules.AAE_FEATURE_PATTERNS,
+    unmatched_feature_key: str = text_rules.UNMATCHED_FEATURE_KEY,
 ) -> dict[str, dict[str, str]]:
-    config = corpus_config[supervised_corpus_name]
-    testing_split_key = f'{supervised_corpus_name}{config.aae_split_suffix}{config.testing_split_suffix}'
-    
-    features_dict_compiled = {
-        feature: re.compile(pattern)
-        for feature, pattern in features_dict.items()
-    }
-    feature_indices_dict = {
-        feature: {}
-        for feature in features_dict.keys()
-    }
+    testing_split_key = f'{supervised_corpus_name}{SplitSuffixes.AAE}{SplitSuffixes.TESTING}'
+    feature_indices_dict = {feature: {} for feature in feature_patterns_dict}
     feature_indices_dict[unmatched_feature_key] = {}
     
     for i, line in enumerate(corpus_splits[testing_split_key]):
         matched_flag = False
-        for feature, compiled_pattern in features_dict_compiled.items():
-            if compiled_pattern.search(line.lower()):
+        for feature, pattern in feature_patterns_dict.items():
+            if pattern.search(line.lower()):
                 feature_indices_dict[feature][str(i)] = line
                 matched_flag = True
         if not matched_flag:
             feature_indices_dict[unmatched_feature_key][str(i)] = line
     return feature_indices_dict
 
-if __name__ == '__main__':
-    corpus_splits = load_and_process_corpora(CORPUS_CONFIG, EXPERIMENT_CONFIG)
-    for split_name, lines in corpus_splits.items():
-        config = get_dataset_config(split_name, CORPUS_CONFIG)
-        save_jsonl(
-            lines,
-            PROCESSED_DATA_DIR,
-            split_name,
-            config.min_len_chars,
-            config.min_len_words,
-            config.max_len_words,
-        )
-    for corpus_name, config in CORPUS_CONFIG.items():
+
+def save_processed_corpora(
+    processed_corpora: ProcessedCorpora,
+    corpus_config: dict[str, DatasetConfig],
+    feature_patterns_dict: dict[str, re.Pattern] = text_rules.AAE_FEATURE_PATTERNS,
+    unmatched_feature_key: str = text_rules.UNMATCHED_FEATURE_KEY,
+    processing_log_filename: str = PROCESSING_LOG_FILENAME,
+    out_dir: Path = PROCESSED_DATA_DIR,
+) -> None:
+    for split_name, lines in processed_corpora.splits.items():
+        if SplitSuffixes.PAIR_METADATA in split_name:
+            save_json(lines, out_dir, split_name)
+        else:
+            save_jsonl(lines, out_dir, split_name)
+    for corpus_name, config in corpus_config.items():
         if isinstance(config, SupervisedDatasetConfig):
-            feature_indices_dict = extract_feature_indices_dict(
-                corpus_name,
-                corpus_splits,
-                CORPUS_CONFIG,
-                AAE_FEATURES,
-            )
-            save_json(
-                feature_indices_dict,
-                PROCESSED_DATA_DIR,
-                f'{corpus_name}{config.feature_indices_dict_suffix}',
-            )
+            feature_indices_dict = extract_feature_indices_dict(corpus_name, processed_corpora.splits, feature_patterns_dict=feature_patterns_dict, unmatched_feature_key=unmatched_feature_key)
+            save_json(feature_indices_dict, out_dir, f'{corpus_name}{SplitSuffixes.FEATURE_INDICES}')
+    save_json(processed_corpora.processing_log, out_dir, processing_log_filename)
+
+
+if __name__ == '__main__':
+    processed_corpora = load_and_process_corpora(CORPUS_CONFIG, EXPERIMENT_CONFIG)
+    save_processed_corpora(processed_corpora, CORPUS_CONFIG)
     tqdm.write('01: Corpus Processing Complete\n')
 

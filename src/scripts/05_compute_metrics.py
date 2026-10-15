@@ -360,7 +360,7 @@ def _load_steering_metric_sweeps(
 ) -> dict[SweepKey, list[SteeringCurvePoint]]:
     steering_metric_sweeps = defaultdict(list)
     for filepath in in_dir.glob('*.json'):
-        metrics = load_json(in_dir, filepath)
+        metrics = load_json(filepath)
         for metric_data in metrics: # deserialization boundary
             metric_data['pooling_type'] = PoolingTypeEnum(metric_data['pooling_type'])
             metric_data['metric'] = MetricTypeEnum(metric_data['metric'])
@@ -501,8 +501,8 @@ def _load_h1_data(
     }
     null_tensors = torch.load(in_dir / f'{H1_NULL_PREFIX}{sweep_identifier}.pt', weights_only=True)
     
-    floors_filepath = in_dir / f'{H1_FLOORS_PREFIX}{sweep_identifier}'
-    floors = load_json(in_dir, floors_filepath)
+    floors_filepath = in_dir / f'{H1_FLOORS_PREFIX}{sweep_identifier}.json'
+    floors = load_json(floors_filepath)
 
     h1_data = H1Data(
         svd_tensors=svd_tensors,

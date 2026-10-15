@@ -31,6 +31,8 @@ FIGURES_DIR = DATA_DIR / '07_figures'
 FIGURES_DIR.mkdir(parents=True, exist_ok=True)
 
 
+PROCESSING_LOG_FILENAME = 'processing_log'
+
 BEHAVIORAL_RESULTS_FILENAME = 'behavioral_results'
 SWEEP_RESULTS_FILENAME = 'sweep_results'
 H1_RESULTS_FILENAME = 'h1_results'

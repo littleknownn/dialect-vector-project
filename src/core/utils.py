@@ -39,6 +39,19 @@ class SingleEstimatorPrefixes(StrEnum):
     H3_POOLED = 'h3_pooled_'
 
 
+class SplitSuffixes(StrEnum):
+    AAE = '_aae'
+    SAE = '_sae'
+    AAE_BACK = '_aae_back'
+    PAIR_METADATA = '_pair_metadata'
+    SUPERVISED = '_supervised'
+    TESTING = '_testing'
+    RESERVE = '_reserve'
+    STRIPPED = '_stripped'
+    POOL = '_pool'
+    FEATURE_INDICES = '_feature_indices'
+
+
 class MetricTypeEnum(StrEnum):
     LLR_SHIFT = 'llr_shift'
     PERPLEXITY = 'perplexity'
@@ -56,6 +69,33 @@ class Q4Stratum(StrEnum):
     ORTHOGRAPHIC = 's2_orthographic'
     FUNCTION_WORD = 's3_function_word'
     LEXICAL = 's4_lexical'
+
+
+class PairMetadata(TypedDict):
+    row_idx: int
+    is_sae_typography_normalized: bool
+    is_aae_back_typography_normalized: bool
+    is_aae_back_valid: bool
+
+
+class LinesProcessingCounts(TypedDict):
+    num_cleaned: int
+    num_out_of_bounds: int
+    num_duplicates: int
+    num_kept: int
+
+
+class PairedCorpusProcessingCounts(TypedDict):
+    num_rows: int
+    num_pairs_kept: int
+    num_aae_back_invalid: int
+    num_dropped_by_split: dict[str, int]
+
+
+class ProcessingLog(TypedDict):
+    paired_corpus_counts: dict[str, PairedCorpusProcessingCounts]
+    single_corpus_counts: dict[str, LinesProcessingCounts]
+    split_sizes: dict[str, int]
 
 
 class CIStats(TypedDict):
@@ -276,17 +316,12 @@ def save_jsonl(
     text_iter: Iterable[str],
     out_dir: Path,
     out_filename: str,
-    min_len_chars: int = 0,
-    min_len_words: int = 0,
-    max_len_words: int | None = None,
 ) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     out_filename += '.jsonl'
     out_path = out_dir / out_filename
     with open(out_path, 'w', encoding='utf-8') as out_file:
         for text in text_iter:
-            if not check_text_len_bounds(text, min_len_chars, min_len_words, max_len_words):
-                continue
             json_object = {'text': text}
             out_file.write(f'{json.dumps(json_object, ensure_ascii=False)}\n')
 
@@ -309,8 +344,7 @@ def save_json(
 
 
 def load_json(
-    in_dir: Path,
-    filename: str,
+    filepath: Path,
 ) -> dict | list:
-    with open(in_dir / f'{filename}.json', 'r', encoding='utf-8') as file:
+    with open(filepath, 'r', encoding='utf-8') as file:
         return json.load(file)

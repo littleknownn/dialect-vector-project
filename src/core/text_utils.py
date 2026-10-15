@@ -3,20 +3,49 @@ import difflib
 import re
 import string
 
+import src.core.text_rules as text_rules
 from src.core.utils import (
     PairEditData,
     Q4Stratum,
 )
-
-_NORMALIZATION_REPLACEMENT_PATTERNS = (
-    (r"[‘’]", "'"), #
-    (r'&', ' and '),
-    (r'<[^<>\s]*>', ''),
+from src.core.config import (
+    DatasetConfig,
 )
+
+
+_Q4_NORMALIZATION_REPLACEMENT_PATTERNS = (
+    (r'&', ' and '),
+    (re.escape(text_rules.MENTION_PLACEHOLDER), ''),
+)
+
+
+def clean_corpus_text(
+    text: str,
+    config: DatasetConfig,
+    cleanup_replace_map: dict[int, int | str | None] = text_rules.CLEANUP_REPLACEMENT_MAP,
+) -> str | None:
+    text = text.translate(cleanup_replace_map)
+    text_lowercase = text.lower()
+    for pattern in config.skipped_data_patterns:
+        if pattern.search(text_lowercase):
+            return None    
+    
+    for pattern, replacement in config.replacement_patterns:
+        text = pattern.sub(replacement, text)
+
+    if not (cleaned_text := text.strip()):
+        return None
+    
+    for pattern in config.skipped_case_patterns:
+        if pattern.search(cleaned_text):
+            return None
+    
+    return cleaned_text
+
 
 def _normalize_words(
     text: str,
-    replacement_patterns: tuple[tuple[str, str], ...] = _NORMALIZATION_REPLACEMENT_PATTERNS,
+    replacement_patterns: tuple[tuple[str, str], ...] = _Q4_NORMALIZATION_REPLACEMENT_PATTERNS,
 ) -> list[str]:
     for pattern, replacement in replacement_patterns:
         text = re.sub(pattern, replacement, text)
