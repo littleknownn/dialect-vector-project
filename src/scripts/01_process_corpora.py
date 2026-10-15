@@ -4,6 +4,7 @@ from typing import Optional
 
 from datasets import load_dataset
 import requests
+import spacy
 from tqdm import tqdm
 import torch
 
@@ -122,16 +123,21 @@ def _process_realaae_dataset(config: DatasetConfig) -> tuple[list[str], list[str
 
 def _process_hf_dataset(
         config: DatasetConfig,
-        excluded_lines: set[str] | None = None,
 ) -> list[str]:
     dataset = load_dataset(config.source_config.hf_path, name=config.source_config.hf_name, split=config.source_config.split)
-    excluded_lines = excluded_lines if excluded_lines else set()
-    cleaned_lines = [
-        clean_row
-        for row in tqdm(dataset)
-        if (clean_row := _clean_text(row[config.source_config.text_col], config))
-        and clean_row.lower() not in excluded_lines
-    ]
+    cleaned_lines = []
+
+    if config.sentencize:
+        sentencizer = spacy.blank('en')
+        sentencizer.add_pipe('sentencizer')
+
+    for row in tqdm(dataset):
+        text = row[config.source_config.text_col]
+        if clean_text := _clean_text(text, config):
+            if config.sentencize:
+                cleaned_lines.extend([sent.text for sent in sentencizer(clean_text).sents])
+            else:
+                cleaned_lines.append(clean_text)
     return cleaned_lines
 
 
@@ -196,15 +202,15 @@ def load_and_process_corpora(
         (None, None),
     )
 
-    cleaned_corpus_data = {}
-    twitter_aae_excluded_lines = set()
+    corpus_data = {}
+    seen_lines = set()
     
     if real_aae_name:
         cleaned_aae, cleaned_sae = _process_realaae_dataset(real_aae_config)
-        twitter_aae_excluded_lines = {line.lower() for line in cleaned_aae}
+        seen_lines.update(line.lower() for line in cleaned_aae)
 
-        cleaned_corpus_data[f'{real_aae_name}{real_aae_config.aae_split_suffix}'] = cleaned_aae
-        cleaned_corpus_data[f'{real_aae_name}{real_aae_config.sae_split_suffix}'] = cleaned_sae
+        corpus_data[f'{real_aae_name}{real_aae_config.aae_split_suffix}'] = cleaned_aae
+        corpus_data[f'{real_aae_name}{real_aae_config.sae_split_suffix}'] = cleaned_sae
 
     for corpus_name, config in CORPUS_CONFIG.items():
         tqdm.write(f'Processing {corpus_name} Data...')
@@ -214,14 +220,24 @@ def load_and_process_corpora(
         elif isinstance(config.source_config, CoraalSourceConfig):
             cleaned_lines = _process_coraal_dataset(config)
         elif isinstance(config.source_config, HFSourceConfig):
-            cleaned_lines = _process_hf_dataset(config, excluded_lines=twitter_aae_excluded_lines)
+            cleaned_lines = _process_hf_dataset(config)
         elif isinstance(config.source_config, GithubSourceConfig):
             cleaned_lines = _process_gh_dataset(config)
 
-        cleaned_corpus_data[corpus_name] = cleaned_lines
+        corpus_lines = []
+        for line in cleaned_lines:
+            line_lower = line.lower()
+            if (
+                line_lower not in seen_lines
+                and check_text_len_bounds(line, config.min_len_chars, config.min_len_words, config.max_len_words)
+            ):
+                corpus_lines.append(line)
+                seen_lines.add(line_lower)
+
+        corpus_data[corpus_name] = corpus_lines
 
     tqdm.write('Truncating Corpora...')
-    corpus_splits = _compute_corpus_splits(cleaned_corpus_data, corpus_config, experiment_config.random_seed)
+    corpus_splits = _compute_corpus_splits(corpus_data, corpus_config, experiment_config.random_seed)
     return corpus_splits
 
 

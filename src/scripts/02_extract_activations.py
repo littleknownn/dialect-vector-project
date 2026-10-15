@@ -12,12 +12,8 @@ from transformers import (
 
 from src.core.base_model import load_base_model
 from src.core.config import (
-    CORPUS_CONFIG,
     EXPERIMENT_CONFIG,
-    BaselineDatasetConfig,
-    DatasetConfig,
     ExperimentConfig,
-    get_dataset_config,
 )
 from src.core.paths import (
     ACTIVATIONS_DIR,
@@ -64,15 +60,20 @@ def _extract_activations(
             outputs = model(**tokens, output_hidden_states=True)
 
         attention_mask = tokens['attention_mask'].unsqueeze(-1)
-        num_tokens_batched = tokens['attention_mask'].sum(dim=1)
+        tokens_batched_len = tokens['attention_mask'].sum(dim=1)
         token_indices_batched = torch.arange(len(batch), device=model.device)
+
+        mean_pooling_mask = attention_mask.clone()
+        if tokenizer.bos_token_id is not None:
+            bos_mask = (tokens['input_ids'] == tokenizer.bos_token_id).unsqueeze(-1)
+            mean_pooling_mask = mean_pooling_mask.masked_fill(bos_mask, 0)
 
         for layer in experiment_config.target_layers:
             layer_activations = outputs.hidden_states[layer + 1]
-            
-            last_activation = layer_activations[token_indices_batched, num_tokens_batched - 1, :]
-            summed_activations = (layer_activations * attention_mask).sum(dim=1)
-            mean_activation = summed_activations / num_tokens_batched.unsqueeze(-1)
+            last_activation = layer_activations[token_indices_batched, tokens_batched_len - 1, :]
+
+            summed_activations = (layer_activations * mean_pooling_mask).sum(dim=1)
+            mean_activation = summed_activations / mean_pooling_mask.sum(dim=1)
 
             activations_by_layer[layer][PoolingTypeEnum.LAST].append(last_activation.cpu())
             activations_by_layer[layer][PoolingTypeEnum.MEAN].append(mean_activation.cpu())
@@ -91,7 +92,6 @@ def _extract_activations(
 def extract_and_save_activations(
     model: PreTrainedModel,
     tokenizer: PreTrainedTokenizerBase,
-    corpus_config: dict[str, DatasetConfig],
     experiment_config: ExperimentConfig,
     in_dir: Path,
     out_dir: Path,
@@ -99,11 +99,6 @@ def extract_and_save_activations(
     model.eval()
     for corpus_path in in_dir.glob('*.jsonl'):
         split_name = corpus_path.stem
-
-        config = get_dataset_config(split_name, corpus_config)
-        if isinstance(config, BaselineDatasetConfig):
-            tqdm.write(f'Skipping {split_name} Baseline Corpus')
-            continue
 
         activation_filepaths = (
             (out_dir / f'{split_name}_{get_sweep_identifier(layer, pooling_type)}.pt')
@@ -143,5 +138,5 @@ def extract_and_save_activations(
 
 if __name__ == '__main__':
     model, tokenizer = load_base_model(EXPERIMENT_CONFIG)
-    extract_and_save_activations(model, tokenizer, CORPUS_CONFIG, EXPERIMENT_CONFIG, PROCESSED_DATA_DIR, ACTIVATIONS_DIR)
+    extract_and_save_activations(model, tokenizer, EXPERIMENT_CONFIG, PROCESSED_DATA_DIR, ACTIVATIONS_DIR)
     tqdm.write('02: Activation Extraction Complete\n')
