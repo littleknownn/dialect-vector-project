@@ -34,7 +34,6 @@ from src.core.utils import (
     PairMetadata,
     ProcessingLog,
     SplitSuffixes,
-    check_text_len_bounds,
     save_json,
     save_jsonl,
 )
@@ -124,8 +123,8 @@ def _process_realaae_dataset(config: SupervisedDatasetConfig) -> PairedCorpusDat
         if not (
             (clean_aae_row := text_utils.clean_corpus_text(aae_row, config))
             and (clean_sae_row := text_utils.clean_corpus_text(sae_row, config))
-            and check_text_len_bounds(clean_aae_row, config.min_len_chars, config.min_len_words, config.max_len_words)
-            and check_text_len_bounds(clean_sae_row, config.min_len_chars, config.min_len_words, config.max_len_words)
+            and text_utils.check_text_len_bounds(clean_aae_row, config.min_len_chars, config.min_len_words, config.max_len_words)
+            and text_utils.check_text_len_bounds(clean_sae_row, config.min_len_chars, config.min_len_words, config.max_len_words)
         ):
             continue
         aae_back_row = row[config.source_config.aae_back_col_idx]
@@ -137,13 +136,14 @@ def _process_realaae_dataset(config: SupervisedDatasetConfig) -> PairedCorpusDat
 
         is_sae_typography_normalized = sae_row != sae_row.translate(text_rules.CLEANUP_REPLACEMENT_MAP)
         is_aae_back_typography_normalized = aae_back_row != aae_back_row.translate(text_rules.CLEANUP_REPLACEMENT_MAP)
-        is_aae_back_valid = check_text_len_bounds(clean_aae_back_row, config.min_len_chars, config.min_len_words, config.max_len_words)
+        is_aae_back_valid = text_utils.check_text_len_bounds(clean_aae_back_row, config.min_len_chars, config.min_len_words, config.max_len_words)
         
         pair_metadata.append(PairMetadata(
             row_idx=row_idx,
             is_sae_typography_normalized=is_sae_typography_normalized,
             is_aae_back_typography_normalized=is_aae_back_typography_normalized,
             is_aae_back_valid=is_aae_back_valid,
+            boundary=text_utils.compute_pair_boundary(clean_aae_row, clean_sae_row, clean_aae_back_row, config),
         ))
 
     paired_corpus_data = PairedCorpusData(
@@ -315,7 +315,7 @@ def load_and_process_corpora(
         lines = []
         num_out_of_bounds, num_duplicates = 0, 0
         for line in cleaned_lines:
-            if not check_text_len_bounds(line, config.min_len_chars, config.min_len_words, config.max_len_words):
+            if not text_utils.check_text_len_bounds(line, config.min_len_chars, config.min_len_words, config.max_len_words):
                 num_out_of_bounds += 1
                 continue
             if (line_lower := line.lower()) in seen_lines:

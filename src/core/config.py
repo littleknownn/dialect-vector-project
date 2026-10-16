@@ -117,9 +117,10 @@ class BaselineDatasetConfig(DatasetConfig):
     pass
 
 
-@dataclass
+@dataclass(kw_only=True)
 class SupervisedDatasetConfig(DatasetConfig):
-    pass
+    boundary_min_previous_words: int
+    boundary_min_following_words: int
 
 
 class SupervisedPair(NamedTuple):
@@ -130,7 +131,7 @@ class SupervisedPair(NamedTuple):
 
 class EstimatorData(NamedTuple):
     supervised_split_pairs: list[SupervisedPair]
-    aae_corpora_splits: list[str]
+    aae_corpora_split_names: list[str]
 
 
 def get_dataset_config(
@@ -146,7 +147,7 @@ def get_dataset_config(
 
 def get_estimator_data(corpus_config: dict[str, DatasetConfig]) -> EstimatorData:
     supervised_split_pairs = []
-    aae_corpora_splits = []
+    aae_corpora_split_names = []
 
     for corpus_name, config in corpus_config.items():
         if isinstance(config, BaselineDatasetConfig):
@@ -160,11 +161,11 @@ def get_estimator_data(corpus_config: dict[str, DatasetConfig]) -> EstimatorData
                 )
             )
         else:
-            aae_corpora_splits.append(corpus_name)
+            aae_corpora_split_names.append(corpus_name)
 
     estimator_data = EstimatorData(
         supervised_split_pairs,
-        aae_corpora_splits,
+        aae_corpora_split_names,
     )
     return estimator_data
 
@@ -292,6 +293,9 @@ CORPUS_CONFIG = {
         max_len_words = 35,
 
         sentencize = False,
+
+        boundary_min_previous_words = 2,
+        boundary_min_following_words = 1,
 
         skipped_data_patterns = [],
         skipped_case_patterns = [],

@@ -1,22 +1,44 @@
 from collections import Counter
+from collections.abc import Callable
 import difflib
 import re
 import string
+from typing import NamedTuple
 
 import src.core.text_rules as text_rules
 from src.core.utils import (
+    PairBoundary,
     PairEditData,
     Q4Stratum,
 )
 from src.core.config import (
     DatasetConfig,
+    SupervisedDatasetConfig,
 )
 
 
-_Q4_NORMALIZATION_REPLACEMENT_PATTERNS = (
-    (r'&', ' and '),
-    (re.escape(text_rules.MENTION_PLACEHOLDER), ''),
-)
+_EDGE_PUNCTUATION = string.punctuation.replace("'", '')
+_WORD_PATTERN = re.compile(r'\S+')
+
+
+class CandidateBoundary(NamedTuple):
+    word_a: re.Match
+    word_b: re.Match
+    distance_from_midpoint: float
+
+
+def check_text_len_bounds(
+    text: str, 
+    min_len_chars: int,
+    min_len_words: int,
+    max_len_words: int | None,
+) -> bool:
+    num_chars = len(text)
+    num_words = len(text.split())
+    above_lower_bounds = min_len_chars <= num_chars and min_len_words <= num_words
+    below_upper_bounds = num_words <= max_len_words if max_len_words is not None else True
+    return above_lower_bounds and below_upper_bounds
+
 
 
 def clean_corpus_text(
@@ -43,17 +65,19 @@ def clean_corpus_text(
     return cleaned_text
 
 
+def _normalize_word(
+    word: str,
+) -> str:
+    return word.lower().strip(_EDGE_PUNCTUATION)
+
+
 def _normalize_words(
     text: str,
-    replacement_patterns: tuple[tuple[str, str], ...] = _Q4_NORMALIZATION_REPLACEMENT_PATTERNS,
+    replacement_patterns: tuple[tuple[str, str], ...] = text_rules.Q4_NORMALIZATION_REPLACEMENT_PATTERNS,
 ) -> list[str]:
     for pattern, replacement in replacement_patterns:
         text = re.sub(pattern, replacement, text)
-    stripped_words = [
-        word.strip(string.punctuation.replace("'", ''))
-        for word in text.lower().split()
-    ]
-    words = [word for word in stripped_words if word]
+    words = [word for word in map(_normalize_word, text.split()) if word]
     return words
 
 
@@ -81,9 +105,10 @@ def _classify_edit(
 
 def _get_ending_class(
     text: str,
+    terminal_punctuation_pattern: re.Pattern = text_rules.TERMINAL_PUNCTUATION_PATTERN,
 ) -> str:
     ending_class = text.rstrip()[-1:]
-    if ending_class in {'.', '!', '?'}:
+    if terminal_punctuation_pattern.search(ending_class):
         return ending_class 
     if ending_class == '':
         return 'none' # why hardcode this
@@ -152,7 +177,116 @@ def compute_pair_edit_data(
         case_changed=_get_case_style(aae_text) != _get_case_style(sae_text),
         tag_count_changed=_get_num_handle_tags(aae_text) != _get_num_handle_tags(sae_text),
         has_asterisk=has_asterisk,
-        num_words_aae=len(aae_text.split()), #
-        num_words_sae=len(sae_text.split()), #
+        num_words_aae=len(aae_text.split()), # replace with more intuitive arg
+        num_words_sae=len(sae_text.split()), # replace with more intuitive arg
     )
     return pair_edit_data
+
+
+def _compute_candidate_boundaries(
+    text_a: str,
+    text_b: str,
+    min_previous_words: int,
+    min_following_words: int,
+) -> list[CandidateBoundary]:
+    words_a = list(_WORD_PATTERN.finditer(text_a))
+    words_b = list(_WORD_PATTERN.finditer(text_b))
+    matcher = difflib.SequenceMatcher(
+        None,
+        [_normalize_word(word.group()) for word in words_a],
+        [_normalize_word(word.group()) for word in words_b],
+        autojunk=False,
+    )
+    candidate_boundaries = []
+    for start_idx_a, start_idx_b, block_size in matcher.get_matching_blocks():
+        for idx_a, idx_b in zip(
+            range(start_idx_a, start_idx_a + block_size),
+            range(start_idx_b, start_idx_b + block_size),
+        ):
+            is_boundary_valid = (
+                min(idx_a, idx_b) + 1 >= min_previous_words
+                and len(words_a) - idx_a > min_following_words
+                and len(words_b) - idx_b > min_following_words
+            )
+            if is_boundary_valid and _normalize_word(words_a[idx_a].group()):
+                distance_from_midpoint = abs(
+                    (idx_b + 1) - (len(words_b) / 2)
+                )
+                candidate_boundaries.append(CandidateBoundary(
+                    word_a=words_a[idx_a],
+                    word_b=words_b[idx_b],
+                    distance_from_midpoint=distance_from_midpoint,
+                ))
+    return candidate_boundaries
+
+
+def _compute_boundary(
+    text_a: str,
+    text_b: str,
+    sort_fn: Callable[
+        [CandidateBoundary],
+        tuple[bool, float, int] | tuple[int, int],
+    ],
+    min_previous_words: int,
+    min_following_words: int,
+) -> CandidateBoundary | None:
+    candidate_boundaries = _compute_candidate_boundaries(text_a, text_b, min_previous_words, min_following_words)
+    boundary = min(candidate_boundaries, key=sort_fn, default=None)
+    return boundary
+
+
+def compute_pair_boundary(
+    aae_text: str,
+    sae_text: str,
+    aae_back_text: str,
+    config: SupervisedDatasetConfig,
+) -> PairBoundary | None:
+    distance_to_midpoint_sort_key_fn = lambda candidate_boundary: (
+        candidate_boundary.word_a.group() != candidate_boundary.word_b.group(),
+        candidate_boundary.distance_from_midpoint,
+        candidate_boundary.word_b.end(),
+    )
+    aae_to_sae_boundary = _compute_boundary(
+        aae_text,
+        sae_text,
+        sort_fn=distance_to_midpoint_sort_key_fn,
+        min_previous_words=config.boundary_min_previous_words,
+        min_following_words=config.boundary_min_following_words,
+    )
+    
+    if aae_to_sae_boundary is None:
+        return None
+    sae_idx = aae_to_sae_boundary.word_b.end()
+    
+    distance_to_sae_sort_key_fn = lambda candidate_boundary: (
+        abs(candidate_boundary.word_a.end() - sae_idx),
+        candidate_boundary.word_a.end(),
+    )
+    sae_to_aae_back_boundary = _compute_boundary(
+        sae_text,
+        aae_back_text,
+        sort_fn=distance_to_sae_sort_key_fn,
+        min_previous_words=config.boundary_min_previous_words,
+        min_following_words=config.boundary_min_following_words,
+    )
+    
+    aae_idx = aae_to_sae_boundary.word_a.end()
+    aae_back_idx = (
+        sae_to_aae_back_boundary.word_b.end()
+        if sae_to_aae_back_boundary else None
+    )
+
+    is_exact = (aae_to_sae_boundary.word_a.group() == aae_to_sae_boundary.word_b.group())
+    is_aae_back_shared = (
+        sae_to_aae_back_boundary is not None
+        and sae_to_aae_back_boundary.word_a.end() == sae_idx
+    )
+
+    pair_boundary = PairBoundary(
+        aae_idx=aae_idx,
+        sae_idx=sae_idx,
+        aae_back_idx=aae_back_idx,
+        is_exact=is_exact,
+        is_aae_back_shared=is_aae_back_shared,
+    )
+    return pair_boundary

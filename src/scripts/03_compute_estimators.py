@@ -38,8 +38,9 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 class SplitLists(NamedTuple):
     supervised_pairs: list[SupervisedPair]
-    aae_corpora_splits: list[str]
-    all_eval_splits: list[str]
+    supervised_split_names: list[str]
+    aae_corpora_split_names: list[str]
+    all_eval_split_names: list[str]
 
 
 def _load_activation_matrix(
@@ -56,26 +57,27 @@ def _load_activation_matrix(
 def _get_split_lists(
     corpus_config: dict[str, DatasetConfig],
 ) -> SplitLists:
-    supervised_pairs, aae_corpora_splits = get_estimator_data(corpus_config)
-    supervised_aae_splits = [pair.aae_split for pair in supervised_pairs]
-    supervised_sae_splits = [pair.sae_split for pair in supervised_pairs]
-    baseline_splits = [
+    supervised_pairs, aae_corpora_split_names = get_estimator_data(corpus_config)
+    supervised_split_names = (
+        [pair.aae_split for pair in supervised_pairs]
+        + [pair.sae_split for pair in supervised_pairs]
+    )
+    baseline_split_names = [
         corpus_name for corpus_name, config in corpus_config.items()
         if isinstance(config, BaselineDatasetConfig)
     ]
 
-    all_eval_splits = (
-        supervised_aae_splits
-        + supervised_sae_splits
-        + aae_corpora_splits
-        + baseline_splits
+    all_eval_split_names = (
+        aae_corpora_split_names
+        + supervised_split_names
+        + baseline_split_names
     )
 
     split_lists = SplitLists(
         supervised_pairs=supervised_pairs,
-        aae_corpora_splits=aae_corpora_splits,
-        all_eval_splits=all_eval_splits,
-
+        supervised_split_names=supervised_split_names,
+        aae_corpora_split_names=aae_corpora_split_names,
+        all_eval_split_names=all_eval_split_names,
     )
     return split_lists
 
@@ -198,7 +200,7 @@ def _compute_and_save_q1_folds(
 
 
 def _compute_h3_estimators(
-    aae_corpora_splits: list[str],
+    aae_corpora_split_names: list[str],
     activations: dict[str, torch.Tensor],
     max_rank: int,
     random_seed: int,
@@ -206,11 +208,11 @@ def _compute_h3_estimators(
     torch.manual_seed(random_seed)
     split_svds = {
         split_name: math_utils.compute_svd_estimator(activations[split_name], max_rank)
-        for split_name in aae_corpora_splits
+        for split_name in aae_corpora_split_names
     }
     estimators = {}
-    for held_out_split in aae_corpora_splits:
-        used_splits = [split_name for split_name in aae_corpora_splits if split_name != held_out_split]
+    for held_out_split in aae_corpora_split_names:
+        used_splits = [split_name for split_name in aae_corpora_split_names if split_name != held_out_split]
         estimators[f'{SingleEstimatorPrefixes.H3_CONSENSUS}{held_out_split}'] = math_utils.compute_chordal_mean_estimator(
             svd_estimators=[split_svds[split_name] for split_name in used_splits],
             rank=max_rank,
@@ -241,19 +243,24 @@ def compute_and_save_estimators(
         PoolingTypeEnum,
     )
     for layer, pooling_type in tqdm(sweep_tuples, desc='Computing Estimators', leave=True):
-        sweep_identifier = get_sweep_identifier(layer, pooling_type)        
+        sweep_identifier = get_sweep_identifier(layer, pooling_type)
+        split_names = (
+            split_lists.supervised_split_names
+            if pooling_type.is_paired_only
+            else split_lists.all_eval_split_names
+        )
         activations = {
             split_name: _load_activation_matrix(split_name, sweep_identifier, in_dir)
-            for split_name in split_lists.all_eval_splits
+            for split_name in split_names
         }
         
-        if layer == experiment_config.primary_layer:
+        if layer == experiment_config.primary_layer and not pooling_type.is_paired_only:
             _compute_and_save_h1_tensors(activations, sweep_identifier, max_rank, experiment_config, out_dir)
         _compute_and_save_q1_folds(split_lists.supervised_pairs, activations, sweep_identifier, experiment_config, out_dir)
 
-        estimators = {}
-        estimators |= _compute_pair_mean_difference_vector(split_lists.supervised_pairs, activations)
-        estimators |= _compute_h3_estimators(split_lists.aae_corpora_splits, activations, max_rank, random_seed=experiment_config.random_seed)
+        estimators = _compute_pair_mean_difference_vector(split_lists.supervised_pairs, activations)
+        if not pooling_type.is_paired_only:
+            estimators |= _compute_h3_estimators(split_lists.aae_corpora_split_names, activations, max_rank, random_seed=experiment_config.random_seed)
         _save_estimators(estimators, layer, pooling_type, experiment_config, out_dir)
 
         del activations, estimators

@@ -31,6 +31,11 @@ type HiddenStateData = tuple[torch.Tensor, *tuple[Any, ...]]
 class PoolingTypeEnum(StrEnum):
     LAST = 'last'
     MEAN = 'mean'
+    BOUNDARY = 'boundary'
+
+    @property
+    def is_paired_only(self) -> bool:
+        return self is PoolingTypeEnum.BOUNDARY
 
 
 class SingleEstimatorPrefixes(StrEnum):
@@ -71,11 +76,20 @@ class Q4Stratum(StrEnum):
     LEXICAL = 's4_lexical'
 
 
+class PairBoundary(TypedDict):
+    aae_idx: int
+    sae_idx: int
+    aae_back_idx: int | None
+    is_exact: bool
+    is_aae_back_shared: bool
+
+
 class PairMetadata(TypedDict):
     row_idx: int
     is_sae_typography_normalized: bool
     is_aae_back_typography_normalized: bool
     is_aae_back_valid: bool
+    boundary: PairBoundary | None
 
 
 class LinesProcessingCounts(TypedDict):
@@ -299,19 +313,6 @@ class EstimatorSteering:
         return steered_hidden_states
 
 
-def check_text_len_bounds(
-    text: str, 
-    min_len_chars: int,
-    min_len_words: int,
-    max_len_words: int | None,
-) -> bool:
-    num_chars = len(text)
-    num_words = len(text.split())
-    above_lower_bounds = min_len_chars <= num_chars and min_len_words <= num_words
-    below_upper_bounds = num_words <= max_len_words if max_len_words is not None else True
-    return above_lower_bounds and below_upper_bounds
-
-
 def save_jsonl(
     text_iter: Iterable[str],
     out_dir: Path,
@@ -348,3 +349,38 @@ def load_json(
 ) -> dict | list:
     with open(filepath, 'r', encoding='utf-8') as file:
         return json.load(file)
+
+
+def load_boundary_char_indices_by_split(
+    in_dir: Path,
+) -> dict[str, list[int | None]]:
+    boundary_keys = {
+        SplitSuffixes.AAE: 'aae_idx', #
+        SplitSuffixes.SAE: 'sae_idx', #
+        SplitSuffixes.AAE_BACK: 'aae_back_idx', #
+    }
+    boundary_char_indices_by_split = {}
+    for metadata_filepath in  in_dir.glob(f'*{SplitSuffixes.PAIR_METADATA}*.json'):
+        corpus_name, split_suffix = metadata_filepath.stem.split(SplitSuffixes.PAIR_METADATA)
+        pair_metadata = load_json(metadata_filepath)
+        for dialect_suffix, boundary_key in boundary_keys.items():
+            split_name = f'{corpus_name}{dialect_suffix}{split_suffix}'
+            boundary_char_indices_by_split[split_name] = [
+                metadata['boundary'][boundary_key]
+                if metadata['boundary'] else None
+                for metadata in pair_metadata
+            ]
+    return boundary_char_indices_by_split
+
+
+def get_boundary_token_idx(
+    token_char_indices: torch.Tensor,
+    boundary_char_idx: int,
+) -> int:
+    token_end_char_indices = token_char_indices[:, 1]
+    is_before_boundary = (
+        (token_end_char_indices > 0)
+        & (token_end_char_indices <= boundary_char_idx)
+    )
+    boundary_token_idx = int(is_before_boundary.nonzero().max())
+    return boundary_token_idx

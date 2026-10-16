@@ -602,8 +602,8 @@ def compute_and_save_metrics(
             q1_projections = _compute_q1_fold_projections(pair, pooling_type, experiment_config, activations_dir, estimators_dir)
             _compute_and_save_q1_results(pair, pooling_type, q1_projections, pair_edit_data, experiment_config, out_dir)
             _compute_and_save_q4_results(pair, pooling_type, q1_projections, pair_edit_data, experiment_config, out_dir)
-            _compute_and_save_h1_results(pair, pooling_type, experiment_config, h1_results_filename, estimators_dir, out_dir)
-
+            if not pooling_type.is_paired_only:
+                _compute_and_save_h1_results(pair, pooling_type, experiment_config, h1_results_filename, estimators_dir, out_dir)
     _compute_and_save_steering_metrics(sweep_results_filename, behavioral_results_filename, sweeps_dir, out_dir)
 
 

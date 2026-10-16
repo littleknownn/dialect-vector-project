@@ -10,7 +10,7 @@ from transformers import (
     PreTrainedTokenizerBase,
 )
 
-from src.core.base_model import load_base_model
+from src.core.base_model import load_base_model_and_tokenizer
 from src.core.config import (
     EXPERIMENT_CONFIG,
     ExperimentConfig,
@@ -99,16 +99,6 @@ def extract_and_save_activations(
     model.eval()
     for corpus_path in in_dir.glob('*.jsonl'):
         split_name = corpus_path.stem
-
-        activation_filepaths = (
-            (out_dir / f'{split_name}_{get_sweep_identifier(layer, pooling_type)}.pt')
-            for layer in experiment_config.target_layers
-            for pooling_type in PoolingTypeEnum
-        )
-        if all(filepath.exists() for filepath in activation_filepaths):
-            tqdm.write(f'Skipping {split_name} Preexisting Activations')
-            continue
-
         tqdm.write(f'Loading {split_name} Corpus...')
         lines = load_jsonl(corpus_path)
         activations = _extract_activations(
@@ -137,6 +127,6 @@ def extract_and_save_activations(
 
 
 if __name__ == '__main__':
-    model, tokenizer = load_base_model(EXPERIMENT_CONFIG)
+    model, tokenizer = load_base_model_and_tokenizer(EXPERIMENT_CONFIG)
     extract_and_save_activations(model, tokenizer, EXPERIMENT_CONFIG, PROCESSED_DATA_DIR, ACTIVATIONS_DIR)
     tqdm.write('02: Activation Extraction Complete\n')

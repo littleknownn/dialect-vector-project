@@ -50,3 +50,9 @@ TAG_PATTERNS: dict[str, re.Pattern] = {
         rf"(?i)\b{HABITUAL_SUBJECTS}\s+be\s+like\b"
     ),
 }
+
+# Q4
+Q4_NORMALIZATION_REPLACEMENT_PATTERNS: re.Pattern = (
+    (r'&', ' and '),
+    (re.escape(MENTION_PLACEHOLDER), ''),
+)
