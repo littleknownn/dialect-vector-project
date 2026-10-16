@@ -6,7 +6,6 @@ from typing import NamedTuple
 
 from datasets import load_dataset
 import requests
-import spacy
 from tqdm import tqdm
 import torch
 
@@ -57,16 +56,29 @@ class DroppedSplitsSummary(NamedTuple):
     num_dropped_by_split: dict[str, int]
 
 
-def _process_coraal_lines(lines: list[str], config: DatasetConfig) -> list[str]:
+def _process_coraal_lines(
+    lines: list[str],
+    config: DatasetConfig,
+) -> list[str]:
     utterances = []
     current_utterance = []
     current_speaker = None
 
-    def flush_utterance():
+    def _flush_utterance():
         if current_utterance:
             combined_utterance = ' '.join(current_utterance)
-            if (clean_utterance := text_utils.clean_corpus_text(combined_utterance, config)):
-                utterances.append(clean_utterance)
+            if config.sentencize:
+                inter_pause_texts = re.split(config.source_config.pause_pattern, combined_utterance)
+                segments = [
+                    sentence
+                    for text in inter_pause_texts
+                    for sentence in text_utils.sentencize(text)
+                ]
+            else:
+                segments = [combined_utterance]
+            for segment in segments:
+                if (clean_segment := text_utils.clean_corpus_text(segment, config)):
+                    utterances.append(clean_segment)
             current_utterance.clear()
 
     for line in lines:
@@ -77,7 +89,7 @@ def _process_coraal_lines(lines: list[str], config: DatasetConfig) -> list[str]:
         text = cols[config.source_config.text_col_idx]
 
         if config.source_config.interviewer_marker in speaker:
-            flush_utterance()
+            _flush_utterance()
             current_speaker = None
         
         elif current_speaker is None or current_speaker == speaker:
@@ -85,11 +97,11 @@ def _process_coraal_lines(lines: list[str], config: DatasetConfig) -> list[str]:
             current_utterance.append(text)
         
         elif current_utterance:
-            flush_utterance()
+            _flush_utterance()
             current_speaker = speaker
             current_utterance.append(text)
     
-    flush_utterance()
+    _flush_utterance()
     return utterances
 
 
@@ -161,15 +173,11 @@ def _process_hf_dataset(
     dataset = load_dataset(config.source_config.hf_path, name=config.source_config.hf_name, split=config.source_config.split)
     cleaned_lines = []
 
-    if config.sentencize:
-        sentencizer = spacy.blank('en')
-        sentencizer.add_pipe('sentencizer')
-
     for row in tqdm(dataset):
         text = row[config.source_config.text_col]
         if clean_text := text_utils.clean_corpus_text(text, config):
             if config.sentencize:
-                cleaned_lines.extend([sent.text for sent in sentencizer(clean_text).sents])
+                cleaned_lines.extend(text_utils.sentencize(clean_text))
             else:
                 cleaned_lines.append(clean_text)
     return cleaned_lines

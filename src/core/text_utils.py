@@ -1,9 +1,12 @@
 from collections import Counter
 from collections.abc import Callable
 import difflib
+import functools
 import re
 import string
 from typing import NamedTuple
+
+import spacy
 
 import src.core.text_rules as text_rules
 from src.core.utils import (
@@ -85,7 +88,7 @@ def _classify_edit(
     aae_words: list[str],
     sae_words: list[str],
     orthographic_threshold: float,
-    function_words: frozenset[str],
+    function_words: tuple[str, ...],
 ) -> Q4Stratum:
     def _get_letters(
         words: list[str],
@@ -155,7 +158,7 @@ def compute_pair_edit_data(
     aae_text: str,
     sae_text: str,
     orthographic_threshold: float,
-    function_words: frozenset[str],
+    function_words: tuple[str, ...],
 ) -> PairEditData:
     aae_words = _normalize_words(aae_text)
     sae_words = _normalize_words(sae_text)
@@ -290,3 +293,16 @@ def compute_pair_boundary(
         is_aae_back_shared=is_aae_back_shared,
     )
     return pair_boundary
+
+
+@functools.cache
+def _load_sentencizer() -> spacy.Language:
+    sentencizer = spacy.blank('en')
+    sentencizer.add_pipe('sentencizer')
+    return sentencizer
+
+
+def sentencize(text: str) -> list[str]:
+    sentencizer = _load_sentencizer()
+    sentences = [sentence.text for sentence in sentencizer(text).sents]
+    return sentences

@@ -230,6 +230,16 @@ class PairEditData(TypedDict):
     num_words_sae: int
 
 
+class ExtractionLog(TypedDict):
+    model_hf_path: str
+    torch_version: str
+    transformers_version: str
+    experiment_config: dict[str, Any]
+    processed_data_hashes: dict[str, str]
+    num_lines_by_split: dict[str, int]
+    num_truncated_lines_by_split: dict[str, int]
+
+
 class GeometricMetricsPair(NamedTuple):
     principal_angles: float
     chordal_distance: float

@@ -29,6 +29,8 @@ class ExperimentConfig:
     primary_layer: int
     primary_pooling_type: PoolingTypeEnum
 
+    debug_max_split_lines: int | None
+
     h1_corpora: list[str]
 
     num_equal_n_repeats: int
@@ -37,15 +39,14 @@ class ExperimentConfig:
     q1_labeled_bounds: Q1LabeledThresholds
 
     q4_orthographic_threshold: float
-    q4_function_words: frozenset[str]
+    q4_function_words: tuple[str, ...]
     q4_tags_per_group: Q4TagsPerGroup
     q4_group_label_thresholds: Q4GroupLabelThresholds
-    q4_log_centered_features: frozenset[str]
+    q4_log_centered_features: tuple[str, ...]
 
     corpus_split_size: int
     batch_size: int
     max_seq_len: int
-    max_eval_lines: int
     random_seed: int
 
     num_bootstrap_samples: int
@@ -61,6 +62,7 @@ class CoraalSourceConfig:
     text_col_idx: int
     speaker_col_idx: int
     interviewer_marker: str
+    pause_pattern: str
 
 
 @dataclass
@@ -183,6 +185,8 @@ EXPERIMENT_CONFIG = ExperimentConfig(
 
     primary_layer = 14,
     primary_pooling_type = PoolingTypeEnum.LAST,
+    
+    debug_max_split_lines = None,
 
     h1_corpora = [
         'twitter_aae',
@@ -209,7 +213,7 @@ EXPERIMENT_CONFIG = ExperimentConfig(
     ),
 
     q4_orthographic_threshold = 0.75,
-    q4_function_words=frozenset('''
+    q4_function_words=tuple('''
         the a an is are was were be been am do does did has have had to of in on at
         for and but that it they he she we you i not no with it's that's what who this
         these those my your his her their our
@@ -226,12 +230,11 @@ EXPERIMENT_CONFIG = ExperimentConfig(
         contribution_unique_r_squared_ci_lower=0.0,
         dominant_share=0.50,
     ),
-    q4_log_centered_features = frozenset(['num_words_aae', 'num_words_sae']),
+    q4_log_centered_features = ('num_words_aae', 'num_words_sae'),
 
     corpus_split_size = 3_782,
     batch_size = 32,
     max_seq_len = 64,
-    max_eval_lines = 512,
     random_seed = 42,
 
     num_bootstrap_samples = 10_000,
@@ -248,13 +251,14 @@ CORPUS_CONFIG = {
             text_col_idx = 3,
             speaker_col_idx = 1,
             interviewer_marker = '_int_',
+            pause_pattern = r'\(pause \d+\.\d+\)'
         ),
 
         min_len_chars = 15,
         min_len_words = 5,
         max_len_words = 35,
 
-        sentencize = False,
+        sentencize = True,
         pool_size = 40_000,
 
         skipped_data_patterns = [
@@ -266,6 +270,8 @@ CORPUS_CONFIG = {
             r'(^|[\[\]\(\)<>])\s*\?',
         ],
         skipped_case_patterns = [
+            r'[()<>]',
+            r'[^.!?]\s*$',
             r'(|\s)\?(\s|$)',
             r'-\s*[.,!?]*\s*$',
             r'\b\w+-\s',

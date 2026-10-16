@@ -52,7 +52,7 @@ TAG_PATTERNS: dict[str, re.Pattern] = {
 }
 
 # Q4
-Q4_NORMALIZATION_REPLACEMENT_PATTERNS: re.Pattern = (
+Q4_NORMALIZATION_REPLACEMENT_PATTERNS: tuple[tuple[str, str], ...] = (
     (r'&', ' and '),
     (re.escape(MENTION_PLACEHOLDER), ''),
 )
