@@ -24,11 +24,12 @@ from src.core.config import (
     get_dataset_config,
 )
 from src.core.paths import (
-    ACTIVATIONS_DIR,
     EXTRACTION_LOG_FILENAME,
     PROCESSED_DATA_DIR,
-    get_model_activations_dir,
+    RunDirs,
+    get_run_dirs,
     get_sweep_identifier,
+    get_sweep_tensor_filepath,
 )
 from src.core.utils import (
     ExtractionLog,
@@ -173,9 +174,9 @@ def extract_and_save_activations(
     tokenizer: PreTrainedTokenizerBase,
     corpus_config: dict[str, DatasetConfig],
     experiment_config: ExperimentConfig,
+    run_dirs: RunDirs,
     extraction_log_filename: str = EXTRACTION_LOG_FILENAME,
     in_dir: Path = PROCESSED_DATA_DIR,
-    out_dir: Path = ACTIVATIONS_DIR,
 ) -> None:
     model.eval()
     boundary_char_indices_by_split = load_boundary_char_indices_by_split(in_dir)
@@ -202,7 +203,7 @@ def extract_and_save_activations(
         for layer, activation_matrices in tqdm(activations.activation_matrices_by_layer.items(), desc='Saving Activations'):
             for pooling_type, activation_matrix in activation_matrices.items():
                 sweep_identifier = get_sweep_identifier(layer, pooling_type)
-                filename = out_dir / f'{split_name}_{sweep_identifier}.pt'
+                filename = get_sweep_tensor_filepath(run_dirs.activations, sweep_identifier, split_name)
                 torch.save(activation_matrix, filename)
 
         if is_unpaired:
@@ -211,7 +212,7 @@ def extract_and_save_activations(
                     'token_states': torch.cat(activations.token_states),
                     'num_tokens_by_line': torch.tensor([len(line_states) for line_states in activations.token_states]),
                 },
-                out_dir / f'{split_name}_token_states.pt'
+                run_dirs.token_states / f'{split_name}.pt',
             )
 
         del activations
@@ -233,18 +234,11 @@ def extract_and_save_activations(
         num_lines_by_split=num_lines_by_split,
         num_truncated_lines_by_split=num_truncated_lines_by_split,
     )
-    save_json(extraction_log, out_dir, extraction_log_filename)
+    save_json(extraction_log, run_dirs.activations, extraction_log_filename)
 
 
 if __name__ == '__main__':
-    is_debug_run = EXPERIMENT_CONFIG.debug_max_split_lines is not None
-    model_activations_dir = get_model_activations_dir(EXPERIMENT_CONFIG.model_hf_path)
-    if is_debug_run:
-        out_dir = model_activations_dir / 'debug'
-        out_dir.mkdir(parents=True, exist_ok=True)
-    else:
-        out_dir = model_activations_dir
-
+    run_dirs = get_run_dirs(EXPERIMENT_CONFIG.model_hf_path, EXPERIMENT_CONFIG.debug_max_split_lines)
     model, tokenizer = load_base_model_and_tokenizer(EXPERIMENT_CONFIG)
-    extract_and_save_activations(model, tokenizer, CORPUS_CONFIG, EXPERIMENT_CONFIG, out_dir=out_dir)
+    extract_and_save_activations(model, tokenizer, CORPUS_CONFIG, EXPERIMENT_CONFIG, run_dirs=run_dirs)
     tqdm.write('02: Activation Extraction Complete\n')

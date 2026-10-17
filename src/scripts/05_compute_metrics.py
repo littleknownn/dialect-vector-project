@@ -1,7 +1,5 @@
 from collections import defaultdict
-from collections.abc import Callable
 import itertools
-import json
 from pathlib import Path
 from typing import NamedTuple
 
@@ -20,14 +18,11 @@ from src.core.config import (
 )
 import src.core.math_utils as math_utils
 from src.core.paths import (
-    ACTIVATIONS_DIR,
     BEHAVIORAL_RESULTS_FILENAME,
-    ESTIMATORS_DIR,
     H1_FLOORS_PREFIX,
     H1_NULL_PREFIX,
     H1_RESULTS_FILENAME,
     H1_SVD_PREFIX,
-    METRICS_DIR,
     PROCESSED_DATA_DIR,
     Q1_FOLD_IDS_PREFIX,
     Q1_FOLD_MEAN_VECTORS_PREFIX,
@@ -35,9 +30,11 @@ from src.core.paths import (
     Q1_RESULTS_PREFIX,
     Q4_RESULTS_PREFIX,
     PAIR_EDIT_DATA_PREFIX,
-    SWEEPS_DIR,
     SWEEP_RESULTS_FILENAME,
+    RunDirs,
+    get_run_dirs,
     get_sweep_identifier,
+    get_sweep_tensor_filepath,
 )
 import src.core.stats_utils as stats_utils
 import src.core.text_utils as text_utils
@@ -93,8 +90,8 @@ def _compute_and_save_pair_edit_data(
     processed_data_dir: Path,
     out_dir: Path,
 ) -> list[PairEditData]:
-    aae_lines = load_jsonl(processed_data_dir / f'{pair.aae_split}.jsonl')
-    sae_lines = load_jsonl(processed_data_dir / f'{pair.sae_split}.jsonl')
+    aae_lines = load_jsonl(processed_data_dir / f'{pair.aae_split}.jsonl')[:experiment_config.debug_max_split_lines]
+    sae_lines = load_jsonl(processed_data_dir / f'{pair.sae_split}.jsonl')[:experiment_config.debug_max_split_lines]
     pair_edit_data = [
         text_utils.compute_pair_edit_data(aae_line, sae_line, experiment_config.q4_orthographic_threshold, experiment_config.q4_function_words)
         for aae_line, sae_line in zip(aae_lines, sae_lines)
@@ -109,14 +106,20 @@ def _compute_q1_fold_projections(
     pooling_type: PoolingTypeEnum,
     experiment_config: ExperimentConfig,
     activations_dir: Path,
-    estimators_dir: Path,
+    q1_estimators_dir: Path,
 ) -> torch.Tensor:
     sweep_identifier = get_sweep_identifier(experiment_config.primary_layer, pooling_type)
-    aae_activation_matrix = torch.load(activations_dir / f'{pair.aae_split}_{sweep_identifier}.pt', weights_only=True).float()
-    sae_activation_matrix = torch.load(activations_dir / f'{pair.sae_split}_{sweep_identifier}.pt', weights_only=True).float()
-    
-    fold_ids = torch.load(estimators_dir / f'{Q1_FOLD_IDS_PREFIX}{pair.corpus_name}.pt', weights_only=True)
-    mean_vector_folds = torch.load(estimators_dir / f'{Q1_FOLD_MEAN_VECTORS_PREFIX}{pair.corpus_name}_{sweep_identifier}.pt', weights_only=True, map_location='cpu')
+    mean_vector_folds = torch.load(q1_estimators_dir / f'{Q1_FOLD_MEAN_VECTORS_PREFIX}{pair.corpus_name}_{sweep_identifier}.pt', weights_only=True, map_location='cpu')
+    fold_ids = torch.load(q1_estimators_dir / f'{Q1_FOLD_IDS_PREFIX}{pair.corpus_name}.pt', weights_only=True)
+    aae_activation_matrix = torch.load(
+        get_sweep_tensor_filepath(activations_dir, sweep_identifier, pair.aae_split),
+        weights_only=True,
+    ).float()
+    sae_activation_matrix = torch.load(
+        get_sweep_tensor_filepath(activations_dir, sweep_identifier, pair.sae_split),
+        weights_only=True,
+    ).float()
+
     fold_projections = stats_utils.compute_fold_projections(aae_activation_matrix - sae_activation_matrix, fold_ids, mean_vector_folds)
     return fold_projections
 
@@ -515,13 +518,17 @@ def _compute_h1_results(
     h1_data: H1Data,
     pooling_type: PoolingTypeEnum,
     experiment_config:  ExperimentConfig,
-    in_dir: Path,
+    steering_estimators_dir: Path,
     supervised_corpus_name: str,
     estimator_rank: int,
 ) -> H1Results:
     act_add_sweep_identifier = get_sweep_identifier(experiment_config.primary_layer, pooling_type, 1)
     supervised_act_add_vector = torch.load(
-        in_dir / f'{SingleEstimatorPrefixes.ACT_ADD}{supervised_corpus_name}_{act_add_sweep_identifier}.pt',
+        get_sweep_tensor_filepath(
+            steering_estimators_dir,
+            act_add_sweep_identifier,
+            f'{SingleEstimatorPrefixes.ACT_ADD}{supervised_corpus_name}',
+        ),
         weights_only=True,
     )
 
@@ -571,43 +578,41 @@ def _compute_and_save_h1_results(
     pair: SupervisedPair,
     pooling_type: PoolingTypeEnum,
     experiment_config: ExperimentConfig,
+    run_dirs: RunDirs,
     h1_results_filename: str,
-    estimators_dir: Path,
-    out_dir: Path,
 ) -> None:
     max_rank = max(experiment_config.target_ranks)
-    h1_data = _load_h1_data(pooling_type, experiment_config, estimators_dir)
-    h1_results = _compute_h1_results(h1_data, pooling_type, experiment_config, estimators_dir, pair.corpus_name, max_rank)
+    data = _load_h1_data(pooling_type, experiment_config, run_dirs.h1_estimators)
+    results = _compute_h1_results(data, pooling_type, experiment_config, run_dirs.steering_estimators, pair.corpus_name, max_rank)
     sweep_identifier = get_sweep_identifier(experiment_config.primary_layer, pooling_type, max_rank)
-    save_json(h1_results, out_dir, f'{h1_results_filename}_{pair.corpus_name}_{sweep_identifier}')
+    filename = f'{h1_results_filename}_{pair.corpus_name}_{sweep_identifier}'
+    save_json(results, run_dirs.metrics, filename)
 
 
 ### Main ###
 def compute_and_save_metrics(
     corpus_config: dict[str, DatasetConfig],
     experiment_config: ExperimentConfig,
+    run_dirs: RunDirs,
+    processed_data_dir: Path = PROCESSED_DATA_DIR,
     h1_results_filename: str = H1_RESULTS_FILENAME,
     sweep_results_filename: str = SWEEP_RESULTS_FILENAME,
-    processed_data_dir: Path = PROCESSED_DATA_DIR,
-    activations_dir: Path = ACTIVATIONS_DIR,
     behavioral_results_filename: str = BEHAVIORAL_RESULTS_FILENAME,
-    estimators_dir: Path = ESTIMATORS_DIR,
-    sweeps_dir: Path = SWEEPS_DIR,
-    out_dir: Path = METRICS_DIR,
 ) -> None:
     supervised_pairs = get_estimator_data(corpus_config).supervised_split_pairs
     for pair in supervised_pairs:
-        pair_edit_data = _compute_and_save_pair_edit_data(pair, experiment_config, processed_data_dir, out_dir)
+        pair_edit_data = _compute_and_save_pair_edit_data(pair, experiment_config, processed_data_dir, run_dirs.metrics)
         for pooling_type in PoolingTypeEnum:
-            q1_projections = _compute_q1_fold_projections(pair, pooling_type, experiment_config, activations_dir, estimators_dir)
-            _compute_and_save_q1_results(pair, pooling_type, q1_projections, pair_edit_data, experiment_config, out_dir)
-            _compute_and_save_q4_results(pair, pooling_type, q1_projections, pair_edit_data, experiment_config, out_dir)
+            q1_projections = _compute_q1_fold_projections(pair, pooling_type, experiment_config, run_dirs.activations, run_dirs.q1_estimators)
+            _compute_and_save_q1_results(pair, pooling_type, q1_projections, pair_edit_data, experiment_config, run_dirs.metrics)
+            _compute_and_save_q4_results(pair, pooling_type, q1_projections, pair_edit_data, experiment_config, run_dirs.metrics)
             if not pooling_type.is_paired_only:
-                _compute_and_save_h1_results(pair, pooling_type, experiment_config, h1_results_filename, estimators_dir, out_dir)
-    _compute_and_save_steering_metrics(sweep_results_filename, behavioral_results_filename, sweeps_dir, out_dir)
+                _compute_and_save_h1_results(pair, pooling_type, experiment_config, run_dirs, h1_results_filename)
+    _compute_and_save_steering_metrics(sweep_results_filename, behavioral_results_filename, run_dirs.sweeps, run_dirs.metrics)
 
 
 if __name__ == '__main__':
     tqdm.write('Loading Data...')
-    compute_and_save_metrics(CORPUS_CONFIG, EXPERIMENT_CONFIG)
+    run_dirs = get_run_dirs(EXPERIMENT_CONFIG.model_hf_path, EXPERIMENT_CONFIG.debug_max_split_lines)
+    compute_and_save_metrics(CORPUS_CONFIG, EXPERIMENT_CONFIG, run_dirs)
     tqdm.write('05: Metric Computation Complete\n')

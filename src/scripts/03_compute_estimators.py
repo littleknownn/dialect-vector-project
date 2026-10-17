@@ -16,14 +16,15 @@ from src.core.config import (
 )
 import src.core.math_utils as math_utils
 from src.core.paths import (
-    ACTIVATIONS_DIR,
-    ESTIMATORS_DIR,
     Q1_FOLD_IDS_PREFIX,
     Q1_FOLD_MEAN_VECTORS_PREFIX,
     H1_FLOORS_PREFIX,
     H1_NULL_PREFIX,
     H1_SVD_PREFIX,
+    RunDirs,
+    get_run_dirs,
     get_sweep_identifier,
+    get_sweep_tensor_filepath,
 )
 import src.core.stats_utils as stats_utils
 from src.core.utils import (
@@ -46,10 +47,11 @@ class SplitLists(NamedTuple):
 def _load_activation_matrix(
     split_name: str,
     sweep_identifier: str,
-    in_dir: Path = ACTIVATIONS_DIR,
+    activations_dir: Path,
 ) -> torch.Tensor:
     activation_matrix = torch.load(
-        in_dir / f'{split_name}_{sweep_identifier}.pt', weights_only=True
+        get_sweep_tensor_filepath(activations_dir, sweep_identifier, split_name),
+        weights_only=True,
     ).to(device, dtype=torch.float32)
     return activation_matrix
 
@@ -97,13 +99,17 @@ def _save_estimators(
                 continue
             rank_estimator_matrix = estimator_matrix[:, :rank].contiguous()
             sweep_identifier = get_sweep_identifier(layer, pooling_type, rank)
-            out_filepath = out_dir / f'{estimator_name}_{sweep_identifier}.pt'
-            torch.save(rank_estimator_matrix, out_filepath)
+            torch.save(
+                rank_estimator_matrix,
+                get_sweep_tensor_filepath(out_dir, sweep_identifier, estimator_name),
+            )
     act_add_sweep_identifier = get_sweep_identifier(layer, pooling_type, 1)
     for estimator_name, estimator_matrix in estimators.items():
         if estimator_name.startswith(SingleEstimatorPrefixes.ACT_ADD):
-            out_filepath = out_dir / f'{estimator_name}_{act_add_sweep_identifier}.pt'
-            torch.save(estimator_matrix, out_filepath)
+            torch.save(
+                estimator_matrix,
+                get_sweep_tensor_filepath(out_dir, act_add_sweep_identifier, estimator_name),
+            )
 
 
 def _compute_and_save_h1_tensors(
@@ -232,8 +238,7 @@ def _compute_h3_estimators(
 def compute_and_save_estimators(
     corpus_config: dict[str, DatasetConfig],
     experiment_config: ExperimentConfig,
-    in_dir: Path,
-    out_dir: Path,
+    run_dirs: RunDirs,
 ) -> None:
     split_lists = _get_split_lists(corpus_config)
     max_rank = max(experiment_config.target_ranks)
@@ -250,27 +255,23 @@ def compute_and_save_estimators(
             else split_lists.all_eval_split_names
         )
         activations = {
-            split_name: _load_activation_matrix(split_name, sweep_identifier, in_dir)
+            split_name: _load_activation_matrix(split_name, sweep_identifier, run_dirs.activations)
             for split_name in split_names
         }
         
         if layer == experiment_config.primary_layer and not pooling_type.is_paired_only:
-            _compute_and_save_h1_tensors(activations, sweep_identifier, max_rank, experiment_config, out_dir)
-        _compute_and_save_q1_folds(split_lists.supervised_pairs, activations, sweep_identifier, experiment_config, out_dir)
+            _compute_and_save_h1_tensors(activations, sweep_identifier, max_rank, experiment_config, run_dirs.h1_estimators)
+        _compute_and_save_q1_folds(split_lists.supervised_pairs, activations, sweep_identifier, experiment_config, run_dirs.q1_estimators)
 
         estimators = _compute_pair_mean_difference_vector(split_lists.supervised_pairs, activations)
         if not pooling_type.is_paired_only:
             estimators |= _compute_h3_estimators(split_lists.aae_corpora_split_names, activations, max_rank, random_seed=experiment_config.random_seed)
-        _save_estimators(estimators, layer, pooling_type, experiment_config, out_dir)
+        _save_estimators(estimators, layer, pooling_type, experiment_config, run_dirs.steering_estimators)
 
         del activations, estimators
 
 
 if __name__ == '__main__':
-    compute_and_save_estimators(
-        CORPUS_CONFIG,
-        EXPERIMENT_CONFIG,
-        in_dir=ACTIVATIONS_DIR,
-        out_dir=ESTIMATORS_DIR,
-    )
+    run_dirs = get_run_dirs(EXPERIMENT_CONFIG.model_hf_path, EXPERIMENT_CONFIG.debug_max_split_lines)
+    compute_and_save_estimators(CORPUS_CONFIG, EXPERIMENT_CONFIG, run_dirs)
     tqdm.write('03: Estimator Computation Complete\n')
