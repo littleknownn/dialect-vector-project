@@ -8,6 +8,8 @@ from tqdm import tqdm
 from src.core.config import (
     CORPUS_CONFIG,
     EXPERIMENT_CONFIG,
+)
+from src.core.config_utils import (
     BaselineDatasetConfig,
     DatasetConfig,
     ExperimentConfig,
@@ -272,6 +274,6 @@ def compute_and_save_estimators(
 
 
 if __name__ == '__main__':
-    run_dirs = get_run_dirs(EXPERIMENT_CONFIG.model_hf_path, EXPERIMENT_CONFIG.debug_max_split_lines)
+    run_dirs = get_run_dirs(EXPERIMENT_CONFIG)
     compute_and_save_estimators(CORPUS_CONFIG, EXPERIMENT_CONFIG, run_dirs)
-    tqdm.write('03: Estimator Computation Complete\n')
+    tqdm.write('04: Estimator Computation Complete\n')

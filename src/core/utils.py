@@ -54,7 +54,14 @@ class SplitSuffixes(StrEnum):
     RESERVE = '_reserve'
     STRIPPED = '_stripped'
     POOL = '_pool'
-    FEATURE_INDICES = '_feature_indices'
+    PAIR_ANNOTATIONS = '_pair_annotations'
+
+
+class AaeFeature(StrEnum):
+    NEGATIVE_CONCORD = 'negative_concord'
+    HABITUAL_BE = 'habitual_be'
+    COMPLETIVE_DONE = 'completive_done'
+    UNCONJUGATED_AINT = 'unconjugated_aint'
 
 
 class MetricTypeEnum(StrEnum):
@@ -230,6 +237,23 @@ class PairEditData(TypedDict):
     num_words_sae: int
 
 
+class LineAnnotations(TypedDict):
+    num_words: int
+    fragmentation: float
+    is_truncated: bool
+    has_mention: bool
+    has_masked_word: bool
+    has_quotative_be_like: bool
+    has_terminal_punctuation: bool
+    probes: list[AaeFeature]
+    profanity_matches: list[str]
+
+
+class PairAnnotations(TypedDict):
+    edit_data_by_threshold: dict[str, PairEditData]
+    context_edit_data_by_threshold: dict[str, PairEditData] | None
+
+
 class ExtractionLog(TypedDict):
     model_hf_path: str
     torch_version: str
@@ -252,30 +276,6 @@ class SweepKey(NamedTuple):
     estimator_name: str
     corpus_name: str
     metric: MetricTypeEnum
-
-
-class Q1Thresholds(NamedTuple):
-    positive_projection_ratio: float
-    standardized_mean_ci_lower: float
-
-
-class Q1LabeledThresholds(NamedTuple):
-    consistent: Q1Thresholds
-    weak: Q1Thresholds
-
-
-class Q4GroupLabelThresholds(NamedTuple):
-    contribution_share_ci_lower: float
-    contribution_unique_r_squared_ci_lower: float
-    dominant_share: float
-
-
-class Q4TagsPerGroup(NamedTuple):
-    orthographic: list[str]
-    function_word: list[str]
-    lexical: list[str]
-    format: list[str]
-    length: list[str]
 
 
 class EstimatorSteering:

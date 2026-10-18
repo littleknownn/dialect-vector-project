@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import NamedTuple
 
+from src.core.config_utils import ExperimentConfig
 from src.core.utils import PoolingTypeEnum
 
 
@@ -14,6 +15,7 @@ PROCESSED_DATA_DIR = DATA_DIR / '01_processed'
 PROCESSED_DATA_DIR.mkdir(parents=True, exist_ok=True)
 RUNS_DIR = DATA_DIR / 'runs'
 
+PROFANITY_LIST_FILENAME = 'profanity_list'
 PROCESSING_LOG_FILENAME = 'processing_log'
 EXTRACTION_LOG_FILENAME = 'extraction_log'
 
@@ -35,36 +37,41 @@ PAIR_EDIT_DATA_PREFIX = 'q4_pair_edit_data_'
 
 
 class RunDirs(NamedTuple):
+    text_annotations: Path
     activations: Path
     token_states: Path
     steering_estimators: Path
     h1_estimators: Path
     q1_estimators: Path
     sweeps: Path
-    metrics: Path
+    pair_results: Path
+    transfer_results: Path
+    steering_results: Path
     figures: Path
 
 
 def get_run_dirs(
-    model_hf_path: str,
-    debug_max_split_lines: int | None,
+    experiment_config: ExperimentConfig,
 ) -> RunDirs:
-    model_name = model_hf_path.split('/')[-1]
-    if debug_max_split_lines is not None:
-        model_name += f'_debug{debug_max_split_lines}'
+    model_name = experiment_config.model_hf_path.split('/')[-1]
+    if experiment_config.debug_max_split_lines is not None:
+        model_name += f'_debug{experiment_config.debug_max_split_lines}'
 
     run_dir = RUNS_DIR / model_name
-    activations_dir = run_dir / '02_activations'
-    estimators_dir = run_dir / '03_estimators'
+    activations_dir = run_dir / '03_activations'
+    estimators_dir = run_dir / '04_estimators'
     run_dirs = RunDirs(
+        text_annotations=run_dir / '02_text_annotations',
         activations=activations_dir,
         token_states=activations_dir / 'token_states',
         steering_estimators=estimators_dir / 'steering',
         h1_estimators=estimators_dir / 'h1',
         q1_estimators=estimators_dir / 'q1',
-        sweeps=run_dir / '04_sweeps',
-        metrics=run_dir / '05_metrics',
-        figures=run_dir / '06_figures',
+        sweeps=run_dir / '05_sweeps',
+        pair_results=run_dir / '06_pair',
+        transfer_results=run_dir / '07_transfer',
+        steering_results=run_dir / '08_steering',
+        figures=run_dir / 'figures',
     )
     
     for subdir in run_dirs:

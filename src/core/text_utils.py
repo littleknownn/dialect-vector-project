@@ -14,14 +14,15 @@ from src.core.utils import (
     PairEditData,
     Q4Stratum,
 )
-from src.core.config import (
+from src.core.config_utils import (
     DatasetConfig,
     SupervisedDatasetConfig,
 )
 
 
-_EDGE_PUNCTUATION = string.punctuation.replace("'", '')
-_WORD_PATTERN = re.compile(r'\S+')
+_EDGE_PUNCTUATION: str = string.punctuation.replace("'", '')
+_MASK_EDGE_PUNCTUATION: str = _EDGE_PUNCTUATION.replace('*', '')
+_WORD_PATTERN: re.Pattern = re.compile(r'\S+')
 
 
 class CandidateBoundary(NamedTuple):
@@ -72,6 +73,28 @@ def _normalize_word(
     word: str,
 ) -> str:
     return word.lower().strip(_EDGE_PUNCTUATION)
+
+
+def get_matched_words(
+    text: str,
+    match_words: frozenset[str],
+) -> list[str]:
+    matches = [
+        word for word in map(_normalize_word, text.split())
+        if word in match_words
+    ]
+    return matches
+
+
+def has_masked_word(
+    text: str,
+) -> bool:
+    for word in text.lower().split():
+        word = word.strip(_MASK_EDGE_PUNCTUATION).lstrip('*')
+        word = text_rules.ACTION_MARKER_PATTERN.sub('', word)
+        if text_rules.MASKED_WORD_PATTERN.fullmatch(word):
+            return True
+    return False
 
 
 def _normalize_words(

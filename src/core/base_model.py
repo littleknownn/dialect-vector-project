@@ -1,4 +1,4 @@
-from src.core.config import ExperimentConfig
+from src.core.config_utils import ExperimentConfig
 import torch
 from transformers import (
     AutoModelForCausalLM,
@@ -7,6 +7,7 @@ from transformers import (
     PreTrainedModel,
     PreTrainedTokenizerBase,
 )
+
 
 def get_quantization_config(experiment_config: ExperimentConfig) -> BitsAndBytesConfig:
     if not experiment_config.load_in_4bit:

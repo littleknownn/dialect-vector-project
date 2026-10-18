@@ -18,6 +18,8 @@ from src.core.base_model import load_base_model_and_tokenizer
 from src.core.config import (
     CORPUS_CONFIG,
     EXPERIMENT_CONFIG,
+)
+from src.core.config_utils import (
     DatasetConfig,
     ExperimentConfig,
     SupervisedDatasetConfig,
@@ -71,7 +73,7 @@ def _extract_activations(
         tokens = tokenizer(
             list(batch_lines),
             return_tensors='pt',
-            padding=True,
+            padding='max_length',
             truncation=True,
             max_length=experiment_config.max_seq_len,
             return_offsets_mapping=True,
@@ -238,7 +240,7 @@ def extract_and_save_activations(
 
 
 if __name__ == '__main__':
-    run_dirs = get_run_dirs(EXPERIMENT_CONFIG.model_hf_path, EXPERIMENT_CONFIG.debug_max_split_lines)
+    run_dirs = get_run_dirs(EXPERIMENT_CONFIG)
     model, tokenizer = load_base_model_and_tokenizer(EXPERIMENT_CONFIG)
     extract_and_save_activations(model, tokenizer, CORPUS_CONFIG, EXPERIMENT_CONFIG, run_dirs=run_dirs)
-    tqdm.write('02: Activation Extraction Complete\n')
+    tqdm.write('03: Activation Extraction Complete\n')

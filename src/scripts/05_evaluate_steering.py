@@ -1,12 +1,11 @@
+### LONG AND CURRENTLY DEPRECIATED ###
+
 import gc
 import itertools
 import json
 import math
 from pathlib import Path
-from typing import (
-    Any,
-    NamedTuple,
-)
+from typing import NamedTuple
 
 import torch
 import torch.nn as nn
@@ -16,10 +15,12 @@ from transformers import (
     PreTrainedTokenizerBase,
 )
 
-from src.core.base_model import load_base_model
+from src.core.base_model import load_base_model_and_tokenizer
 from src.core.config import (
     CORPUS_CONFIG,
     EXPERIMENT_CONFIG,
+)
+from src.core.config_utils import (
     BaselineDatasetConfig,
     DatasetConfig,
     ExperimentConfig,
@@ -200,7 +201,7 @@ def _compute_dialect_llr_shift_ci(
     estimator_matrix: torch.Tensor,
     alpha: float,
     num_bootstrap_samples: int,
-    bootstrap_alpha: float,
+    p_alpha: float,
     act_add: bool,
 ) -> math_utils.BootstrapResults:
     with EstimatorSteering(estimator_matrix, layer_module, alpha, act_add=act_add):
@@ -208,7 +209,7 @@ def _compute_dialect_llr_shift_ci(
         steered_sae_losses = _compute_batched_input_losses(model, batched_sae_inputs)
     
     llr_shift_tensor = ((steered_sae_losses - steered_aae_losses) - (unsteered_losses.sae - unsteered_losses.aae)).to(torch.float32)
-    bootstrap_results = math_utils.compute_bootstrap(llr_shift_tensor, num_bootstrap_samples, bootstrap_alpha)
+    bootstrap_results = math_utils.compute_bootstrap(llr_shift_tensor, num_bootstrap_samples, p_alpha)
     return bootstrap_results
 
 
@@ -270,7 +271,7 @@ def _compute_supervised_sweep_metrics(
     estimator_matrix: torch.Tensor,
     alpha: float,
     num_bootstrap_samples: int,
-    bootstrap_alpha: float,
+    p_alpha: float,
     act_add: bool,
 ) -> list[SweepMetric]:
     sweep_metrics = []
@@ -285,7 +286,7 @@ def _compute_supervised_sweep_metrics(
             estimator_matrix,
             alpha,
             num_bootstrap_samples,
-            bootstrap_alpha,
+            p_alpha,
             act_add,
         )
         sweep_metrics.append(SweepMetric(
@@ -298,9 +299,9 @@ def _compute_supervised_sweep_metrics(
             alpha=alpha,
         
             metric=MetricTypeEnum.LLR_SHIFT,
-            value=llr_shift_stats.mean,
-            ci_lower=llr_shift_stats.ci_lower,
-            ci_upper=llr_shift_stats.ci_upper,
+            value=llr_shift_stats.ci.mean,
+            ci_lower=llr_shift_stats.ci.ci_lower,
+            ci_upper=llr_shift_stats.ci.ci_upper,
             p_value=llr_shift_stats.p_value,
         ))
     return sweep_metrics
@@ -343,7 +344,7 @@ def _evaluate_estimator_sweep(
             estimator_matrix,
             alpha,
             experiment_config.num_bootstrap_samples,
-            experiment_config.bootstrap_alpha,
+            experiment_config.p_alpha,
             act_add,
         ))
     return sweep_metrics
@@ -385,7 +386,7 @@ def compute_and_save_subspace_metrics(
         for corpus_name, paired_inputs in supervised_corpora.items()
     }
 
-    evaluation_ranks = sorted(set(experiment_config.target_ranks) | {1})
+    evaluation_ranks = [1] # sorted(set(experiment_config.target_ranks) | {1})
     sweeps_tuples = itertools.product(
         experiment_config.target_layers,
         PoolingTypeEnum,
@@ -443,15 +444,15 @@ def compute_and_save_subspace_metrics(
 
 
 if __name__ == '__main__':
-    model, tokenizer = load_base_model(EXPERIMENT_CONFIG)
+    model, tokenizer = load_base_model_and_tokenizer(EXPERIMENT_CONFIG)
     compute_and_save_subspace_metrics(
-        model,
-        tokenizer,
-        CORPUS_CONFIG,
-        EXPERIMENT_CONFIG,
-        PROCESSED_DATA_DIR,
-        ESTIMATORS_DIR,
-        SWEEPS_DIR,
+        model=model,
+        tokenizer=tokenizer,
         supervised_corpus_name='real_aae',
+        corpus_config=CORPUS_CONFIG,
+        experiment_config=EXPERIMENT_CONFIG,
+        processed_data_dir=PROCESSED_DATA_DIR,
+        estimators_dir=ESTIMATORS_DIR,
+        out_dir=SWEEPS_DIR,
     )
-    tqdm.write('04: Steering Evaluation Complete\n')
+    tqdm.write('05: Steering Evaluation Complete\n')

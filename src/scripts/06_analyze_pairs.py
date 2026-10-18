@@ -1,28 +1,22 @@
-from collections import defaultdict
-import itertools
 from pathlib import Path
 from typing import NamedTuple
 
-import numpy as np
 from tqdm import tqdm
-from scipy.stats import false_discovery_control
 import torch
 
 from src.core.config import (
-    DatasetConfig,
-    ExperimentConfig,
-    SupervisedPair,
     CORPUS_CONFIG,
     EXPERIMENT_CONFIG,
+)
+from src.core.config_utils import (
+    DatasetConfig,
+    ExperimentConfig,
+    Q1LabeledThresholds,
+    Q4GroupLabelThresholds,
+    SupervisedPair,
     get_estimator_data,
 )
-import src.core.math_utils as math_utils
 from src.core.paths import (
-    BEHAVIORAL_RESULTS_FILENAME,
-    H1_FLOORS_PREFIX,
-    H1_NULL_PREFIX,
-    H1_RESULTS_FILENAME,
-    H1_SVD_PREFIX,
     PROCESSED_DATA_DIR,
     Q1_FOLD_IDS_PREFIX,
     Q1_FOLD_MEAN_VECTORS_PREFIX,
@@ -30,7 +24,6 @@ from src.core.paths import (
     Q1_RESULTS_PREFIX,
     Q4_RESULTS_PREFIX,
     PAIR_EDIT_DATA_PREFIX,
-    SWEEP_RESULTS_FILENAME,
     RunDirs,
     get_run_dirs,
     get_sweep_identifier,
@@ -39,24 +32,13 @@ from src.core.paths import (
 import src.core.stats_utils as stats_utils
 import src.core.text_utils as text_utils
 from src.core.utils import (
-    AucSummary,
-    BehavioralSummary,
     CIStats,
-    FdrSummary,
-    H1Results,
-    MetricTypeEnum,
     PairEditData,
     PoolingTypeEnum,
     Q1ConsistencyLabel,
-    Q1LabeledThresholds,
     Q1Results,
-    Q4GroupLabelThresholds,
     Q4Results,
     Q4Stratum,
-    SingleEstimatorPrefixes,
-    SweepKey,
-    SweepSummary,
-    load_json,
     load_jsonl,
     save_json,
 )
@@ -66,22 +48,6 @@ class Q4FeatureMatrix(NamedTuple):
     matrix: torch.Tensor
     group_feature_indices: dict[str, list[int]]
 
-class SteeringCurvePoint(NamedTuple):
-    alpha: float
-    value: float
-    p_value: float | None
-
-
-class BehavioralResults(NamedTuple):
-    auc_pos: dict[SweepKey, float]
-    auc_neg: dict[SweepKey, float]
-    p_values_fdr: dict[SweepKey, dict[float, float]]
-
-
-class H1Data(NamedTuple):
-    svd_tensors: dict[str, torch.Tensor]
-    nulls: torch.Tensor
-    floors: dict[str, dict[str, list[float]]]
 
 ### Pair Edit Data ###
 def _compute_and_save_pair_edit_data(
@@ -93,7 +59,7 @@ def _compute_and_save_pair_edit_data(
     aae_lines = load_jsonl(processed_data_dir / f'{pair.aae_split}.jsonl')[:experiment_config.debug_max_split_lines]
     sae_lines = load_jsonl(processed_data_dir / f'{pair.sae_split}.jsonl')[:experiment_config.debug_max_split_lines]
     pair_edit_data = [
-        text_utils.compute_pair_edit_data(aae_line, sae_line, experiment_config.q4_orthographic_threshold, experiment_config.q4_function_words)
+        text_utils.compute_pair_edit_data(aae_line, sae_line, experiment_config.q4_orthographic_thresholds.strict, experiment_config.q4_function_words)
         for aae_line, sae_line in zip(aae_lines, sae_lines)
     ]
     save_json(pair_edit_data, out_dir, f'{PAIR_EDIT_DATA_PREFIX}{pair.corpus_name}')
@@ -344,7 +310,6 @@ def _compute_q4_results(
     return results
 
 
-
 def _compute_and_save_q4_results(
     pair: SupervisedPair,
     pooling_type: PoolingTypeEnum,
@@ -357,237 +322,6 @@ def _compute_and_save_q4_results(
     q4_results = _compute_q4_results(pair, pooling_type, projections, pair_edit_data, experiment_config)
     save_json(q4_results, out_dir, f'{Q4_RESULTS_PREFIX}{pair.corpus_name}_{sweep_identifier}')
 
-### Steering Metrics ###
-def _load_steering_metric_sweeps(
-    in_dir: Path
-) -> dict[SweepKey, list[SteeringCurvePoint]]:
-    steering_metric_sweeps = defaultdict(list)
-    for filepath in in_dir.glob('*.json'):
-        metrics = load_json(filepath)
-        for metric_data in metrics: # deserialization boundary
-            metric_data['pooling_type'] = PoolingTypeEnum(metric_data['pooling_type'])
-            metric_data['metric'] = MetricTypeEnum(metric_data['metric'])
-
-            sweep_key = SweepKey(
-                **{key: metric_data[key] for key in SweepKey._fields}
-            )
-            point = SteeringCurvePoint(
-                **{key: metric_data.get(key) for key in SteeringCurvePoint._fields}
-            )
-            steering_metric_sweeps[sweep_key].append(point)
-
-    for points in steering_metric_sweeps.values():
-        points.sort(key=lambda point: point.alpha)
-
-    return steering_metric_sweeps
-
-
-def _flatten_sweep_metrics(
-    steering_metric_sweeps: dict[SweepKey, list[SteeringCurvePoint]],
-) -> list[SweepSummary]:
-    summary = []
-    for sweep_key, points in steering_metric_sweeps.items():
-        for point in points:
-            summary.append(SweepSummary(
-                layer=sweep_key.layer,
-                pooling_type=sweep_key.pooling_type,
-                rank=sweep_key.rank,
-                estimator_name=sweep_key.estimator_name,
-                corpus_name=sweep_key.corpus_name,
-                metric=sweep_key.metric,
-                alpha=point.alpha,
-                value=point.value,
-                p_value=point.p_value,
-            ))
-    return summary
-
-
-def _compute_behavioral_results(
-    steering_metric_sweeps: dict[SweepKey, list[SteeringCurvePoint]],
-) -> BehavioralResults:
-    auc_pos_results = {}
-    auc_neg_results = {}
-
-    llr_keys = []
-    llr_p_values = []
-    for sweep_key, curve_points in tqdm(steering_metric_sweeps.items(), desc='Computing Behavioral Results'):
-        pos_points = [p for p in curve_points if p.alpha >= 0.0]
-        neg_points = [p for p in curve_points if p.alpha <= 0.0]
-
-        auc_pos_results[sweep_key] = float(np.trapz(
-            y=[point.value for point in pos_points],
-            x=[point.alpha for point in pos_points],
-        ))
-        auc_neg_results[sweep_key] = -float(np.trapz(
-            y=[point.value for point in neg_points],
-            x=[point.alpha for point in neg_points],
-        ))
-
-        if sweep_key.metric == MetricTypeEnum.LLR_SHIFT:
-            for point in curve_points:
-                if point.p_value is not None:
-                    llr_p_values.append(point.p_value)
-                    llr_keys.append((sweep_key, point.alpha))
-
-    fdr_results = defaultdict(dict)
-    if llr_p_values:
-        llr_p_values_fdr = false_discovery_control(llr_p_values)
-        for (sweep_key, alpha), p_value_fdr in zip(llr_keys, llr_p_values_fdr):
-            fdr_results[sweep_key][alpha] = float(p_value_fdr)
-
-    results = BehavioralResults(
-        auc_pos=auc_pos_results,
-        auc_neg=auc_neg_results,
-        p_values_fdr=dict(fdr_results),
-    )
-    return results
-
-
-def _flatten_behavioral_results(behavioral_results: BehavioralResults) -> BehavioralSummary:
-    auc = []
-    for sweep_key, auc_pos in behavioral_results.auc_pos.items():
-        auc.append(AucSummary(
-            layer=sweep_key.layer,
-            pooling_type=sweep_key.pooling_type,
-            rank=sweep_key.rank,
-            estimator_name=sweep_key.estimator_name,
-            corpus_name=sweep_key.corpus_name,
-            metric=sweep_key.metric,
-            auc_pos=auc_pos,
-            auc_neg=behavioral_results.auc_neg[sweep_key],
-        ))
-
-    fdr = []
-    for sweep_key, alpha_dict in behavioral_results.p_values_fdr.items():
-        for alpha, p_value_fdr in alpha_dict.items():
-            fdr.append(FdrSummary(
-                layer=sweep_key.layer,
-                pooling_type=sweep_key.pooling_type,
-                rank=sweep_key.rank,
-                estimator_name=sweep_key.estimator_name,
-                corpus_name=sweep_key.corpus_name,
-                metric=sweep_key.metric,
-                alpha=alpha,
-                p_value_fdr=p_value_fdr,
-            ))
-
-    summary = BehavioralSummary(auc=auc, fdr=fdr)
-    return summary
-
-
-def _compute_and_save_steering_metrics(
-    sweep_results_filename: str,
-    behavioral_results_filename: str,
-    in_dir: Path,
-    out_dir: Path,
-) -> None:
-    steering_metric_sweeps = _load_steering_metric_sweeps(in_dir)
-    behavioral_results = _compute_behavioral_results(steering_metric_sweeps)
-    save_json(_flatten_sweep_metrics(steering_metric_sweeps), out_dir, sweep_results_filename)
-    save_json(_flatten_behavioral_results(behavioral_results), out_dir, behavioral_results_filename)
-
-
-### H1 ###
-def _load_h1_data(
-    pooling_type: PoolingTypeEnum,
-    experiment_config: ExperimentConfig,
-    in_dir: Path,
-) -> H1Data:
-    sweep_identifier = get_sweep_identifier(experiment_config.primary_layer, pooling_type)
-
-    svd_tensors = {
-        corpus_name: torch.load(
-            in_dir / f'{H1_SVD_PREFIX}{corpus_name}_{sweep_identifier}.pt',
-            weights_only=True,
-        )
-        for corpus_name in experiment_config.h1_corpora
-    }
-    null_tensors = torch.load(in_dir / f'{H1_NULL_PREFIX}{sweep_identifier}.pt', weights_only=True)
-    
-    floors_filepath = in_dir / f'{H1_FLOORS_PREFIX}{sweep_identifier}.json'
-    floors = load_json(floors_filepath)
-
-    h1_data = H1Data(
-        svd_tensors=svd_tensors,
-        nulls=null_tensors,
-        floors=floors,
-    )
-    return h1_data
-
-def _compute_h1_results(
-    h1_data: H1Data,
-    pooling_type: PoolingTypeEnum,
-    experiment_config:  ExperimentConfig,
-    steering_estimators_dir: Path,
-    supervised_corpus_name: str,
-    estimator_rank: int,
-) -> H1Results:
-    act_add_sweep_identifier = get_sweep_identifier(experiment_config.primary_layer, pooling_type, 1)
-    supervised_act_add_vector = torch.load(
-        get_sweep_tensor_filepath(
-            steering_estimators_dir,
-            act_add_sweep_identifier,
-            f'{SingleEstimatorPrefixes.ACT_ADD}{supervised_corpus_name}',
-        ),
-        weights_only=True,
-    )
-
-    floors = {
-        corpus_name: h1_data.floors[corpus_name][str(estimator_rank)]
-        for corpus_name in experiment_config.h1_corpora
-    }
-
-    # fix hardcode
-    pair_distances = {
-        f'{corpus_a_name}|{corpus_b_name}': math_utils.compute_geometric_metrics(
-            h1_data.svd_tensors[corpus_a_name][:, :, :estimator_rank],
-            h1_data.svd_tensors[corpus_b_name][:, :, :estimator_rank],
-        ).chordal_distance.tolist()
-        for corpus_a_name, corpus_b_name in itertools.combinations(experiment_config.h1_corpora, 2)
-    }
-
-    num_null_pairs = len(h1_data.nulls) // 2
-    null_distances = math_utils.compute_geometric_metrics(
-        h1_data.nulls[:num_null_pairs, :, :estimator_rank],
-        h1_data.nulls[num_null_pairs:2 * num_null_pairs, :, :estimator_rank],
-    ).chordal_distance.tolist()
-
-    projection_energies = {
-        corpus_name: math_utils.compute_vector_energy(
-            svd_tensor[:, :, :estimator_rank],
-            supervised_act_add_vector,
-        ).tolist()
-        for corpus_name, svd_tensor in h1_data.svd_tensors.items()
-    }
-    projection_energies['null'] = math_utils.compute_vector_energy(
-        h1_data.nulls[:, :, :estimator_rank],
-        supervised_act_add_vector,
-    ).tolist()
-    
-    results = H1Results(
-        supervised_vector_norm=float(torch.linalg.vector_norm(supervised_act_add_vector)),
-        floors=floors,
-        pair_distances=pair_distances,
-        null_distances=null_distances,
-        projection_energies=projection_energies,
-    )
-    return results
-
-
-def _compute_and_save_h1_results(
-    pair: SupervisedPair,
-    pooling_type: PoolingTypeEnum,
-    experiment_config: ExperimentConfig,
-    run_dirs: RunDirs,
-    h1_results_filename: str,
-) -> None:
-    max_rank = max(experiment_config.target_ranks)
-    data = _load_h1_data(pooling_type, experiment_config, run_dirs.h1_estimators)
-    results = _compute_h1_results(data, pooling_type, experiment_config, run_dirs.steering_estimators, pair.corpus_name, max_rank)
-    sweep_identifier = get_sweep_identifier(experiment_config.primary_layer, pooling_type, max_rank)
-    filename = f'{h1_results_filename}_{pair.corpus_name}_{sweep_identifier}'
-    save_json(results, run_dirs.metrics, filename)
-
 
 ### Main ###
 def compute_and_save_metrics(
@@ -595,24 +329,18 @@ def compute_and_save_metrics(
     experiment_config: ExperimentConfig,
     run_dirs: RunDirs,
     processed_data_dir: Path = PROCESSED_DATA_DIR,
-    h1_results_filename: str = H1_RESULTS_FILENAME,
-    sweep_results_filename: str = SWEEP_RESULTS_FILENAME,
-    behavioral_results_filename: str = BEHAVIORAL_RESULTS_FILENAME,
 ) -> None:
     supervised_pairs = get_estimator_data(corpus_config).supervised_split_pairs
     for pair in supervised_pairs:
-        pair_edit_data = _compute_and_save_pair_edit_data(pair, experiment_config, processed_data_dir, run_dirs.metrics)
+        pair_edit_data = _compute_and_save_pair_edit_data(pair, experiment_config, processed_data_dir, run_dirs.pair_results)
         for pooling_type in PoolingTypeEnum:
             q1_projections = _compute_q1_fold_projections(pair, pooling_type, experiment_config, run_dirs.activations, run_dirs.q1_estimators)
-            _compute_and_save_q1_results(pair, pooling_type, q1_projections, pair_edit_data, experiment_config, run_dirs.metrics)
-            _compute_and_save_q4_results(pair, pooling_type, q1_projections, pair_edit_data, experiment_config, run_dirs.metrics)
-            if not pooling_type.is_paired_only:
-                _compute_and_save_h1_results(pair, pooling_type, experiment_config, run_dirs, h1_results_filename)
-    _compute_and_save_steering_metrics(sweep_results_filename, behavioral_results_filename, run_dirs.sweeps, run_dirs.metrics)
+            _compute_and_save_q1_results(pair, pooling_type, q1_projections, pair_edit_data, experiment_config, run_dirs.pair_results)
+            _compute_and_save_q4_results(pair, pooling_type, q1_projections, pair_edit_data, experiment_config, run_dirs.pair_results)
 
 
 if __name__ == '__main__':
     tqdm.write('Loading Data...')
-    run_dirs = get_run_dirs(EXPERIMENT_CONFIG.model_hf_path, EXPERIMENT_CONFIG.debug_max_split_lines)
+    run_dirs = get_run_dirs(EXPERIMENT_CONFIG)
     compute_and_save_metrics(CORPUS_CONFIG, EXPERIMENT_CONFIG, run_dirs)
-    tqdm.write('05: Metric Computation Complete\n')
+    tqdm.write('06: Pair Metrics Computation Complete\n')

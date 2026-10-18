@@ -12,6 +12,8 @@ import torch
 from src.core.config import (
     CORPUS_CONFIG,
     EXPERIMENT_CONFIG,
+)
+from src.core.config_utils import (
     CoraalSourceConfig,
     DatasetConfig,
     ExperimentConfig,
@@ -358,32 +360,8 @@ def load_and_process_corpora(
     return processed_corpora
 
 
-def extract_feature_indices_dict(
-    supervised_corpus_name: str,
-    corpus_splits: dict[str, list[str]],
-    feature_patterns_dict: dict[str, re.Pattern] = text_rules.AAE_FEATURE_PATTERNS,
-    unmatched_feature_key: str = text_rules.UNMATCHED_FEATURE_KEY,
-) -> dict[str, dict[str, str]]:
-    testing_split_key = f'{supervised_corpus_name}{SplitSuffixes.AAE}{SplitSuffixes.TESTING}'
-    feature_indices_dict = {feature: {} for feature in feature_patterns_dict}
-    feature_indices_dict[unmatched_feature_key] = {}
-    
-    for i, line in enumerate(corpus_splits[testing_split_key]):
-        matched_flag = False
-        for feature, pattern in feature_patterns_dict.items():
-            if pattern.search(line.lower()):
-                feature_indices_dict[feature][str(i)] = line
-                matched_flag = True
-        if not matched_flag:
-            feature_indices_dict[unmatched_feature_key][str(i)] = line
-    return feature_indices_dict
-
-
 def save_processed_corpora(
     processed_corpora: ProcessedCorpora,
-    corpus_config: dict[str, DatasetConfig],
-    feature_patterns_dict: dict[str, re.Pattern] = text_rules.AAE_FEATURE_PATTERNS,
-    unmatched_feature_key: str = text_rules.UNMATCHED_FEATURE_KEY,
     processing_log_filename: str = PROCESSING_LOG_FILENAME,
     out_dir: Path = PROCESSED_DATA_DIR,
 ) -> None:
@@ -392,15 +370,10 @@ def save_processed_corpora(
             save_json(lines, out_dir, split_name)
         else:
             save_jsonl(lines, out_dir, split_name)
-    for corpus_name, config in corpus_config.items():
-        if isinstance(config, SupervisedDatasetConfig):
-            feature_indices_dict = extract_feature_indices_dict(corpus_name, processed_corpora.splits, feature_patterns_dict=feature_patterns_dict, unmatched_feature_key=unmatched_feature_key)
-            save_json(feature_indices_dict, out_dir, f'{corpus_name}{SplitSuffixes.FEATURE_INDICES}')
     save_json(processed_corpora.processing_log, out_dir, processing_log_filename)
 
 
 if __name__ == '__main__':
     processed_corpora = load_and_process_corpora(CORPUS_CONFIG, EXPERIMENT_CONFIG)
-    save_processed_corpora(processed_corpora, CORPUS_CONFIG)
+    save_processed_corpora(processed_corpora)
     tqdm.write('01: Corpus Processing Complete\n')
-
