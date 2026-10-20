@@ -1,3 +1,4 @@
+import hashlib
 from enum import StrEnum
 from pathlib import Path
 import json
@@ -38,12 +39,6 @@ class PoolingTypeEnum(StrEnum):
         return self is PoolingTypeEnum.BOUNDARY
 
 
-class SingleEstimatorPrefixes(StrEnum):
-    ACT_ADD = 'act_add_'
-    H3_CONSENSUS = 'h3_consensus_'
-    H3_POOLED = 'h3_pooled_'
-
-
 class SplitSuffixes(StrEnum):
     AAE = '_aae'
     SAE = '_sae'
@@ -55,6 +50,7 @@ class SplitSuffixes(StrEnum):
     STRIPPED = '_stripped'
     POOL = '_pool'
     PAIR_ANNOTATIONS = '_pair_annotations'
+    SPEAKERS = '_speakers'
 
 
 class AaeFeature(StrEnum):
@@ -203,6 +199,7 @@ class Q1Results(TypedDict):
     corpus_name: str
     pooling_type: PoolingTypeEnum
     num_pairs: int
+    num_excluded_pairs: int
     mean_projection: CIStats
     positive_projection_ratio: CIStats
     standardized_projection_mean: CIStats
@@ -359,6 +356,17 @@ def load_json(
 ) -> dict | list:
     with open(filepath, 'r', encoding='utf-8') as file:
         return json.load(file)
+
+
+def compute_file_hashes(
+    in_dir: Path,
+) -> dict[str, str]:
+    file_hashes = {
+        path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in sorted(in_dir.iterdir())
+        if path.is_file()
+    }
+    return file_hashes
 
 
 def load_boundary_char_indices_by_split(

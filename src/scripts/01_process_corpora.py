@@ -40,6 +40,11 @@ from src.core.utils import (
 )
 
 
+class SpeakerLines(NamedTuple):
+    lines: list[str]
+    speakers: list[str]
+
+
 class PairedCorpusData(NamedTuple):
     aae_lines: list[str]
     sae_lines: list[str]
@@ -61,10 +66,9 @@ class DroppedSplitsSummary(NamedTuple):
 def _process_coraal_lines(
     lines: list[str],
     config: DatasetConfig,
-) -> list[str]:
-    utterances = []
-    current_utterance = []
-    current_speaker = None
+) -> SpeakerLines:
+    utterances, speakers = [], []
+    current_utterance, current_speaker = [], None
 
     def _flush_utterance():
         if current_utterance:
@@ -79,8 +83,11 @@ def _process_coraal_lines(
             else:
                 segments = [combined_utterance]
             for segment in segments:
-                if (clean_segment := text_utils.clean_corpus_text(segment, config)):
+                if (
+                    clean_segment := text_utils.clean_corpus_text(segment, config)
+                ):
                     utterances.append(clean_segment)
+                    speakers.append(current_speaker)
             current_utterance.clear()
 
     for line in lines:
@@ -104,11 +111,12 @@ def _process_coraal_lines(
             current_utterance.append(text)
     
     _flush_utterance()
-    return utterances
+    speaker_lines = SpeakerLines(utterances, speakers)
+    return speaker_lines
 
 
-def _process_coraal_dataset(config: DatasetConfig) -> list[str]:
-    cleaned_lines = []
+def _process_coraal_dataset(config: DatasetConfig) -> SpeakerLines:
+    cleaned_lines, speakers = [], []
     for city_dir in tqdm(config.source_config.in_dir.iterdir()):
         if not city_dir.is_dir():
             continue
@@ -118,8 +126,11 @@ def _process_coraal_dataset(config: DatasetConfig) -> list[str]:
             with open(text_path, 'r', encoding='utf-8', errors='ignore') as text_file:
                 lines = text_file.readlines()
                 lines = lines[1:] if config.source_config.header else lines
-                cleaned_lines.extend(_process_coraal_lines(lines, config))
-    return cleaned_lines
+                speaker_lines = _process_coraal_lines(lines, config)
+                cleaned_lines.extend(speaker_lines.lines)
+                speakers.extend(speaker_lines.speakers)
+    speaker_lines = SpeakerLines(cleaned_lines, speakers)
+    return speaker_lines
 
 
 def _process_realaae_dataset(config: SupervisedDatasetConfig) -> PairedCorpusData:
@@ -315,16 +326,18 @@ def load_and_process_corpora(
             continue
         tqdm.write(f'Processing {corpus_name} Data...')
 
+        speakers = None
         if isinstance(config.source_config, CoraalSourceConfig):
-            cleaned_lines = _process_coraal_dataset(config)
+            cleaned_lines, speakers = _process_coraal_dataset(config)
         elif isinstance(config.source_config, HFSourceConfig):
             cleaned_lines = _process_hf_dataset(config)
         elif isinstance(config.source_config, GithubSourceConfig):
             cleaned_lines = _process_gh_dataset(config)
+        line_speakers = speakers if speakers is not None else itertools.repeat(None)
 
-        lines = []
+        lines, speakers_kept = [], []
         num_out_of_bounds, num_duplicates = 0, 0
-        for line in cleaned_lines:
+        for line, speaker in zip(cleaned_lines, line_speakers):
             if not text_utils.check_text_len_bounds(line, config.min_len_chars, config.min_len_words, config.max_len_words):
                 num_out_of_bounds += 1
                 continue
@@ -332,9 +345,13 @@ def load_and_process_corpora(
                 num_duplicates += 1
                 continue
             lines.append(line)
+            speakers_kept.append(speaker)
             seen_lines.add(line_lower)
 
         corpus_data[corpus_name] = lines
+        if speakers is not None:
+            corpus_data[f'{corpus_name}{SplitSuffixes.SPEAKERS}'] = speakers_kept
+        
         single_corpus_counts[corpus_name] = LinesProcessingCounts(
             num_cleaned=len(cleaned_lines),
             num_out_of_bounds=num_out_of_bounds,
@@ -365,8 +382,9 @@ def save_processed_corpora(
     processing_log_filename: str = PROCESSING_LOG_FILENAME,
     out_dir: Path = PROCESSED_DATA_DIR,
 ) -> None:
+    summary_suffixes = (SplitSuffixes.PAIR_METADATA, SplitSuffixes.SPEAKERS)
     for split_name, lines in processed_corpora.splits.items():
-        if SplitSuffixes.PAIR_METADATA in split_name:
+        if any(suffix in split_name for suffix in summary_suffixes):
             save_json(lines, out_dir, split_name)
         else:
             save_jsonl(lines, out_dir, split_name)

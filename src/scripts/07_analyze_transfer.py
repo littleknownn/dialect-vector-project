@@ -17,6 +17,7 @@ from src.core.config_utils import (
 )
 import src.core.math_utils as math_utils
 from src.core.paths import (
+    DIFFERENCE_VECTOR_PREFIX,
     H1_FLOORS_PREFIX,
     H1_NULL_PREFIX,
     H1_RESULTS_FILENAME,
@@ -25,11 +26,11 @@ from src.core.paths import (
     get_run_dirs,
     get_sweep_identifier,
     get_sweep_tensor_filepath,
+    verify_extraction_log,
 )
 from src.core.utils import (
     H1Results,
     PoolingTypeEnum,
-    SingleEstimatorPrefixes,
     load_json,
     save_json,
 )
@@ -76,12 +77,12 @@ def _compute_h1_results(
     supervised_corpus_name: str,
     estimator_rank: int,
 ) -> H1Results:
-    act_add_sweep_identifier = get_sweep_identifier(experiment_config.primary_layer, pooling_type, 1)
-    supervised_act_add_vector = torch.load(
+    sweep_identifier = get_sweep_identifier(experiment_config.primary_layer, pooling_type, 1)
+    difference_vector = torch.load(
         get_sweep_tensor_filepath(
             steering_estimators_dir,
-            act_add_sweep_identifier,
-            f'{SingleEstimatorPrefixes.ACT_ADD}{supervised_corpus_name}',
+            sweep_identifier,
+            f'{DIFFERENCE_VECTOR_PREFIX}{supervised_corpus_name}',
         ),
         weights_only=True,
     )
@@ -109,17 +110,17 @@ def _compute_h1_results(
     projection_energies = {
         corpus_name: math_utils.compute_vector_energy(
             svd_tensor[:, :, :estimator_rank],
-            supervised_act_add_vector,
+            difference_vector,
         ).tolist()
         for corpus_name, svd_tensor in h1_data.svd_tensors.items()
     }
     projection_energies['null'] = math_utils.compute_vector_energy(
         h1_data.nulls[:, :, :estimator_rank],
-        supervised_act_add_vector,
+        difference_vector,
     ).tolist()
     
     results = H1Results(
-        supervised_vector_norm=float(torch.linalg.vector_norm(supervised_act_add_vector)),
+        supervised_vector_norm=float(torch.linalg.vector_norm(difference_vector)),
         floors=floors,
         pair_distances=pair_distances,
         null_distances=null_distances,
@@ -159,5 +160,6 @@ def compute_and_save_metrics(
 if __name__ == '__main__':
     tqdm.write('Loading Data...')
     run_dirs = get_run_dirs(EXPERIMENT_CONFIG)
+    verify_extraction_log(EXPERIMENT_CONFIG, run_dirs)
     compute_and_save_metrics(CORPUS_CONFIG, EXPERIMENT_CONFIG, run_dirs)
     tqdm.write('07: Transfer Metrics Computation Complete\n')

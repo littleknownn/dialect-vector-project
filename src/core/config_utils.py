@@ -9,6 +9,18 @@ from src.core.utils import (
 )
 
 
+LOGGED_EXPERIMENT_CONFIG_FIELDS = (
+    'model_hf_path',
+    'load_in_4bit',
+    'bnb_4bit_quant_type',
+    'target_layers',
+    'primary_layer',
+    'debug_max_split_lines',
+    'batch_size',
+    'max_seq_len',
+)
+
+
 class Q1Thresholds(NamedTuple):
     positive_projection_ratio: float
     standardized_mean_ci_lower: float

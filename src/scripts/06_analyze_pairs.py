@@ -28,6 +28,7 @@ from src.core.paths import (
     get_run_dirs,
     get_sweep_identifier,
     get_sweep_tensor_filepath,
+    verify_extraction_log,
 )
 import src.core.stats_utils as stats_utils
 import src.core.text_utils as text_utils
@@ -114,6 +115,11 @@ def _compute_q1_results(
             return Q1ConsistencyLabel.WEAK
         return Q1ConsistencyLabel.PARTIAL
 
+    valued_pairs_mask = ~projections.isnan()
+    num_excluded_pairs = len(projections) - int(valued_pairs_mask.sum())
+    projections = projections[valued_pairs_mask]
+    identical_pairs_mask = identical_pairs_mask[valued_pairs_mask]
+
     mean_projection = stats_utils.compute_bootstrap_ci(
         projections,
         num_draws=experiment_config.num_bootstrap_samples,
@@ -146,6 +152,7 @@ def _compute_q1_results(
         corpus_name=pair.corpus_name,
         pooling_type=pooling_type,
         num_pairs=len(projections),
+        num_excluded_pairs=num_excluded_pairs,
         mean_projection=mean_projection,
         positive_projection_ratio=positive_projection_ratio,
         standardized_projection_mean=standardized_projection_mean,
@@ -269,8 +276,16 @@ def _compute_q4_results(
             if group_shares[group_name]['estimate'] >= thresholds.dominant_share
         ]
         return contributing_groups, dominating_groups
-    
+
+    valued_pairs_mask = ~projections.isnan()
+    pair_edit_data = [
+        edit_data for edit_data, is_valued
+        in zip(pair_edit_data, valued_pairs_mask.tolist())
+        if is_valued
+    ]
+    projections = projections[valued_pairs_mask]
     projections_float64 = projections.double()
+    
     feature_matrix = _build_q4_feature_matrix(pair_edit_data, experiment_config)
     all_groups = list(feature_matrix.group_feature_indices)
     feature_groups = [group_name for group_name in all_groups if group_name != 'intercept']
@@ -342,5 +357,6 @@ def compute_and_save_metrics(
 if __name__ == '__main__':
     tqdm.write('Loading Data...')
     run_dirs = get_run_dirs(EXPERIMENT_CONFIG)
+    verify_extraction_log(EXPERIMENT_CONFIG, run_dirs)
     compute_and_save_metrics(CORPUS_CONFIG, EXPERIMENT_CONFIG, run_dirs)
     tqdm.write('06: Pair Metrics Computation Complete\n')

@@ -1,8 +1,17 @@
+import dataclasses
+import json
 from pathlib import Path
 from typing import NamedTuple
 
-from src.core.config_utils import ExperimentConfig
-from src.core.utils import PoolingTypeEnum
+from src.core.config_utils import (
+    LOGGED_EXPERIMENT_CONFIG_FIELDS,
+    ExperimentConfig,
+)
+from src.core.utils import (
+    PoolingTypeEnum,
+    compute_file_hashes,
+    load_json,
+)
 
 
 CORE_DIR = Path(__file__).parent
@@ -34,7 +43,7 @@ Q1_RESULTS_PREFIX = 'q1_results_'
 
 Q4_RESULTS_PREFIX = 'q4_results_'
 PAIR_EDIT_DATA_PREFIX = 'q4_pair_edit_data_'
-
+DIFFERENCE_VECTOR_PREFIX = 'difference_vector_'
 
 class RunDirs(NamedTuple):
     text_annotations: Path
@@ -99,3 +108,32 @@ def get_sweep_identifier(
     if rank is not None:
         identifier += f'_{rank:02d}'
     return identifier
+
+
+def verify_extraction_log(
+    experiment_config: ExperimentConfig,
+    run_dirs: RunDirs,
+    processed_data_dir: Path = PROCESSED_DATA_DIR,
+    logged_experiment_config_fields: tuple[str, ...] = LOGGED_EXPERIMENT_CONFIG_FIELDS,
+) -> None:
+    extraction_log = load_json(run_dirs.activations / f'{EXTRACTION_LOG_FILENAME}.json')
+    logged_config = extraction_log['experiment_config']
+    logged_hashes = extraction_log['processed_data_hashes']
+    current_config = json.loads(json.dumps(dataclasses.asdict(experiment_config))) # simulate pre-logging
+    current_hashes = compute_file_hashes(processed_data_dir)
+
+    mismatched_fields = [
+        field for field in logged_experiment_config_fields
+        if logged_config[field] != current_config[field]
+    ]
+    mismatched_files = sorted(
+        filename for filename in logged_hashes.keys() | current_hashes.keys()
+        if logged_hashes.get(filename) != current_hashes.get(filename)
+    )
+
+    if mismatched_fields or mismatched_files:
+        raise ValueError(
+            'Stored activations do not match the current setup.\n'
+            f'Configuration fields not matching: {mismatched_fields}\n'
+            f'Processed files not matching: {mismatched_files}'
+        )

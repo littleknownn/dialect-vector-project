@@ -1,7 +1,6 @@
 from collections import defaultdict
 import dataclasses
 import gc
-import hashlib
 import itertools
 from pathlib import Path
 from typing import NamedTuple
@@ -37,6 +36,7 @@ from src.core.utils import (
     ExtractionLog,
     PoolingTypeEnum,
     SplitSuffixes,
+    compute_file_hashes,
     get_boundary_token_idx,
     load_boundary_char_indices_by_split,
     load_jsonl,
@@ -221,18 +221,12 @@ def extract_and_save_activations(
         gc.collect()
         torch.cuda.empty_cache()
 
-    processed_data_hashes = {
-        path.name: hashlib.sha256(path.read_bytes()).hexdigest()
-        for path in sorted(in_dir.iterdir())
-        if path.is_file()
-    }
-
     extraction_log = ExtractionLog(
         model_hf_path=experiment_config.model_hf_path,
         torch_version=torch.__version__,
         transformers_version=transformers.__version__,
         experiment_config=dataclasses.asdict(experiment_config),
-        processed_data_hashes=processed_data_hashes,
+        processed_data_hashes=compute_file_hashes(in_dir),
         num_lines_by_split=num_lines_by_split,
         num_truncated_lines_by_split=num_truncated_lines_by_split,
     )
