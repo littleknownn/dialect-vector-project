@@ -30,14 +30,14 @@ _HABITUAL_SUBJECTS: str = (
     r")"
 )
 AAE_FEATURE_PATTERNS: dict[AaeFeature, re.Pattern] = {
-    AaeFeature.NEGATIVE_CONCORD: re.compile(
-        r"(?i)\b(?:ain'?t|don'?t|didn'?t|won'?t|can'?t|couldn'?t|never|not)\b(?:\s+\w+){0,4}\s+\b(?:nothing|nobody|nowhere|none|no)\b",
-    ),
     AaeFeature.HABITUAL_BE: re.compile(
         rf"(?i)\b{_HABITUAL_SUBJECTS}\s+be\s+(?:\w+ing|mad|chillin'?|trippin'?|wildin'?|at\s+the|in\s+the|on\s+that)\b",
     ),
     AaeFeature.COMPLETIVE_DONE: re.compile(
         r"(?i)\b(?:done)\s+(?:told|said|seen|went|ate|took|gave|left|did|been|made|got|had|heard|broke|forgot|\w+ed)\b",
+    ),
+    AaeFeature.NEGATIVE_CONCORD: re.compile(
+        r"(?i)\b(?:ain'?t|don'?t|didn'?t|won'?t|can'?t|couldn'?t|never|not)\b(?:\s+\w+){0,4}\s+\b(?:nothing|nobody|nowhere|none|no)\b",
     ),
     AaeFeature.UNCONJUGATED_AINT: re.compile(
         r"(?i)\bain'?t\b(?:\s+\w+){1,3}",

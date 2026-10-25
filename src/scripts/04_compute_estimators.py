@@ -33,6 +33,7 @@ from src.core.paths import (
 )
 import src.core.stats_utils as stats_utils
 from src.core.utils import (
+    DifferenceVector,
     PoolingTypeEnum,
     SplitSuffixes,
     load_json,
@@ -50,15 +51,14 @@ class SplitLists(NamedTuple):
     all_eval_split_names: list[str]
 
 
-class VariantMasks(NamedTuple):
-    no_typography: torch.Tensor
-    same_terminal_punctuation: torch.Tensor
-    no_profanity: torch.Tensor
-
-
 class PairMasks(NamedTuple):
-    variants: VariantMasks
+    variants: dict[DifferenceVector, torch.Tensor]
     aae_back_valid: torch.Tensor
+
+
+class Estimators(NamedTuple):
+    difference_vectors: dict[str, torch.Tensor]
+    fold_mean_vectors: dict[str, torch.Tensor]
 
 
 def _load_activation_matrix(
@@ -86,23 +86,23 @@ def _load_supervised_pair_masks(
     sae_annotations = load_json(text_annotations_dir / f'{pair.sae_split}.json')[:experiment_config.debug_max_split_lines]
     line_annotation_pairs = list(zip(aae_annotations, sae_annotations, strict=True))
 
-    variant_masks = VariantMasks(
-        no_typography=torch.tensor([
+    variant_masks = {
+        DifferenceVector.NO_TYPOGRAPHY: torch.tensor([
             not metadata['is_sae_typography_normalized']
             for metadata in pair_metadata
         ]),
-        same_terminal_punctuation=torch.tensor([
+        DifferenceVector.SAME_TERMINAL_PUNCTUATION: torch.tensor([
             aae_line['has_terminal_punctuation'] == sae_line['has_terminal_punctuation']
             for aae_line, sae_line in line_annotation_pairs
         ]),
-        no_profanity=torch.tensor([
+        DifferenceVector.NO_PROFANITY: torch.tensor([
             not any(
                 line['profanity_matches'] or line['has_masked_word']
                 for line in (aae_line, sae_line)
             )
             for aae_line, sae_line in line_annotation_pairs
         ]),
-    )
+    }
     aae_back_valid = torch.tensor([
         metadata['is_aae_back_valid']
         for metadata in pair_metadata
@@ -220,90 +220,82 @@ def _compute_and_save_h1_tensors(
     save_json(floors, out_dir, f'{H1_FLOORS_PREFIX}{sweep_identifier}')
 
 
-def _compute_difference_vectors(
-    pairs: list[SupervisedPair],
-    activations: dict[str, torch.Tensor],
-) -> dict[str, torch.Tensor]:
-    estimators = {}
-    for pair in pairs:
-        aae_activation_matrix = activations[pair.aae_split]
-        sae_activation_matrix = activations[pair.sae_split]
-        estimators[f'{DIFFERENCE_VECTOR_PREFIX}{pair.corpus_name}'] = math_utils.compute_mean_vector(
-            aae_activation_matrix - sae_activation_matrix,
-        )
-    return estimators
-
-
-def _compute_difference_vector_variants(
-    pair: SupervisedPair,
-    activations: dict[str, torch.Tensor],
-    variant_masks: VariantMasks,
-) -> dict[str, torch.Tensor]:
-    difference_matrix = activations[pair.aae_split] - activations[pair.sae_split]
-    estimators = {
-        f'{DIFFERENCE_VECTOR_PREFIX}{pair.corpus_name}_{variant_name}': math_utils.compute_mean_vector(
-            difference_matrix[mask.to(device)],
-        )
-        for variant_name, mask in variant_masks._asdict().items()
-    }
-    return estimators
-
-
-def _compute_difference_vector_components(
+def _compute_difference_matrices(
     pair: SupervisedPair,
     activations:  dict[str, torch.Tensor],
-    aae_back_valid_mask: torch.Tensor,
-    aae_back_activation_matrix: torch.Tensor,
-) -> dict[str, torch.Tensor]:
-    aae_back_valid_mask = aae_back_valid_mask.to(device)
-    estimator_prefix = f'{DIFFERENCE_VECTOR_PREFIX}{pair.corpus_name}'
-    estimators = {
-        f'{estimator_prefix}_aae_minus_aae_back': math_utils.compute_mean_vector(
-            (activations[pair.aae_split] - aae_back_activation_matrix)[aae_back_valid_mask],
-        ),
-        f'{estimator_prefix}_aae_back_minus_sae': math_utils.compute_mean_vector(
-            (aae_back_activation_matrix - activations[pair.sae_split])[aae_back_valid_mask],
-        ),
+    pair_masks: PairMasks,
+    aae_back_activation_matrix: torch.Tensor | None,
+) -> dict[DifferenceVector, torch.Tensor]:
+    mask_rows_fn = lambda matrix, mask: torch.where(
+        condition=mask.to(device).unsqueeze(1),
+        input=matrix,
+        other=float('nan'), #
+    )
+    difference_matrix = activations[pair.aae_split] - activations[pair.sae_split]
+    difference_matrices = {
+        DifferenceVector.OFFSET: difference_matrix
     }
-    return estimators
+    difference_matrices |= {
+        vector: mask_rows_fn(difference_matrix, mask)
+        for vector, mask in pair_masks.variants.items()
+    }
+    if aae_back_activation_matrix is not None:
+        difference_matrices[DifferenceVector.AUTHORSHIP] = mask_rows_fn(
+            activations[pair.aae_split] - aae_back_activation_matrix,
+            pair_masks.aae_back_valid,
+        )
+        difference_matrices[DifferenceVector.DIALECT] = mask_rows_fn(
+            aae_back_activation_matrix - activations[pair.sae_split],
+            pair_masks.aae_back_valid,
+        )
+    return difference_matrices
 
 
-def _compute_and_save_q1_folds(
-    supervised_pairs: list[SupervisedPair],
-    activations: dict[str, torch.Tensor],
+def _save_q1_folds(
+    fold_ids_dict: dict[str, torch.Tensor],
+    mean_vector_folds_dict: dict[str, torch.Tensor],
     sweep_identifier: str,
-    experiment_config: ExperimentConfig,
     out_dir: Path,
 ) -> None:
-    for pair in supervised_pairs:
-        difference_matrix = activations[pair.aae_split] - activations[pair.sae_split]
-        fold_ids = stats_utils.make_fold_ids(len(difference_matrix), experiment_config.num_cv_folds, experiment_config.random_seed)
-        fold_mean_vectors = stats_utils.compute_fold_excluded_mean_vectors(difference_matrix, fold_ids)
-
-        torch.save(fold_ids, out_dir / f'{Q1_FOLD_IDS_PREFIX}{pair.corpus_name}.pt')
-        torch.save(fold_mean_vectors, out_dir / f'{Q1_FOLD_MEAN_VECTORS_PREFIX}{pair.corpus_name}_{sweep_identifier}.pt')
+    for corpus_name, fold_ids in fold_ids_dict.items():
+        torch.save(fold_ids, out_dir / f'{Q1_FOLD_IDS_PREFIX}{corpus_name}.pt')
+    for name, folds in mean_vector_folds_dict.items():
+        torch.save(folds, out_dir / f'{name}_{sweep_identifier}.pt')
 
 
 def _compute_estimators(
     split_lists: SplitLists,
     activations: dict[str, torch.Tensor],
     supervised_pair_masks_dict: dict[str, PairMasks],
+    fold_ids_dict: dict[str, torch.Tensor],
     layer: int,
     pooling_type: PoolingTypeEnum,
     experiment_config: ExperimentConfig,
     run_dirs: RunDirs,
-) -> dict[str, torch.Tensor]:
-    estimators = _compute_difference_vectors(split_lists.supervised_pairs, activations)
-    for pair in split_lists.supervised_pairs:
-        pair_masks = supervised_pair_masks_dict[pair.corpus_name]
-        estimators |= _compute_difference_vector_variants(pair, activations, pair_masks.variants)
+) -> Estimators:
+    sweep_identifier = get_sweep_identifier(layer, pooling_type)
+    difference_vectors = {}
+    fold_mean_vectors = {}
 
+    for pair in split_lists.supervised_pairs:
+        aae_back_activation_matrix = None
         if layer == experiment_config.primary_layer:
-            sweep_identifier = get_sweep_identifier(layer, pooling_type)
             aae_back_split_name = f'{pair.corpus_name}{SplitSuffixes.AAE_BACK}{SplitSuffixes.SUPERVISED}'
             aae_back_activation_matrix = _load_activation_matrix(aae_back_split_name, sweep_identifier, run_dirs.activations)
-            estimators |= _compute_difference_vector_components(pair, activations, pair_masks.aae_back_valid, aae_back_activation_matrix)
-    
+        difference_matrices = _compute_difference_matrices(
+            pair, activations, supervised_pair_masks_dict[pair.corpus_name], aae_back_activation_matrix,
+        )
+        for vector, difference_matrix in difference_matrices.items():
+            difference_vectors[f'{DIFFERENCE_VECTOR_PREFIX}{pair.corpus_name}{vector}'] = math_utils.compute_mean_vector(difference_matrix)
+            fold_mean_vectors[f'{Q1_FOLD_MEAN_VECTORS_PREFIX}{pair.corpus_name}{vector}'] = stats_utils.compute_fold_excluded_mean_vectors(
+                difference_matrix,
+                fold_ids_dict[pair.corpus_name],
+            )
+
+    estimators = Estimators(
+        difference_vectors=difference_vectors,
+        fold_mean_vectors=fold_mean_vectors,
+    )
     return estimators
 
 
@@ -324,6 +316,10 @@ def compute_and_save_estimators(
         pair.corpus_name: _load_supervised_pair_masks(pair, experiment_config, run_dirs.text_annotations, processed_data_dir)
         for pair in split_lists.supervised_pairs
     }
+    fold_ids_dict = {
+        corpus_name: stats_utils.make_fold_ids(len(pair_masks.aae_back_valid), experiment_config.num_cv_folds, experiment_config.random_seed)
+        for corpus_name, pair_masks in supervised_pair_masks_dict.items()
+    }
     for layer, pooling_type in tqdm(sweep_tuples, desc='Computing Estimators', leave=True):
         sweep_identifier = get_sweep_identifier(layer, pooling_type)
         split_names = (
@@ -338,10 +334,10 @@ def compute_and_save_estimators(
         
         if layer == experiment_config.primary_layer and not pooling_type.is_paired_only:
             _compute_and_save_h1_tensors(activations, sweep_identifier, max_rank, experiment_config, run_dirs.h1_estimators)
-        _compute_and_save_q1_folds(split_lists.supervised_pairs, activations, sweep_identifier, experiment_config, run_dirs.q1_estimators)
 
-        estimators = _compute_estimators(split_lists, activations, supervised_pair_masks_dict, layer, pooling_type, experiment_config, run_dirs)
-        _save_estimators(estimators, layer, pooling_type, run_dirs.steering_estimators)
+        estimators = _compute_estimators(split_lists, activations, supervised_pair_masks_dict, fold_ids_dict, layer, pooling_type, experiment_config, run_dirs)
+        _save_estimators(estimators.difference_vectors, layer, pooling_type, run_dirs.steering_estimators)
+        _save_q1_folds(fold_ids_dict, estimators.fold_mean_vectors, sweep_identifier, run_dirs.q1_estimators)
 
         del activations, estimators
 

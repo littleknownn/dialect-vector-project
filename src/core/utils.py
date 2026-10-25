@@ -65,12 +65,29 @@ class MetricTypeEnum(StrEnum):
     PERPLEXITY = 'perplexity'
 
 
+class DifferenceVector(StrEnum):
+    OFFSET = ''
+    AUTHORSHIP = '_aae_minus_aae_back'
+    DIALECT = '_aae_back_minus_sae'
+    NO_TYPOGRAPHY = '_no_typography'
+    SAME_TERMINAL_PUNCTUATION = '_same_terminal_punctuation'
+    NO_PROFANITY = '_no_profanity'
+
+    @property
+    def includes_aae_back(self) -> bool:
+        return self in (
+            DifferenceVector.AUTHORSHIP,
+            DifferenceVector.DIALECT,
+        )
+
+
 class Q1ConsistencyLabel(StrEnum):
     CONSISTENT = 'consistent'
     PARTIAL = 'partial'
     WEAK = 'weak'
     POOLING_DEPENDENT = 'pooling_dependent'
-    
+
+
 class Q4Stratum(StrEnum):
     IDENTICAL = 's0_identical'
     FORMAT_ONLY = 's1_format_only'
@@ -197,16 +214,32 @@ class H1Results(TypedDict):
 
 class Q1Results(TypedDict):
     corpus_name: str
+    label: Q1ConsistencyLabel
+    vector: DifferenceVector
+    layer: int
     pooling_type: PoolingTypeEnum
     num_pairs: int
     num_excluded_pairs: int
-    mean_projection: CIStats
-    positive_projection_ratio: CIStats
-    standardized_projection_mean: CIStats
-    label: Q1ConsistencyLabel
+    
+    projection_mean_ci: CIStats
+    standardized_projection_mean_ci: CIStats
+    positive_projection_ratio_ci: CIStats
+    ending_same_projection_mean_ci: CIStats
+    ending_changed_projection_mean_ci: CIStats
+
+    activation_difference_energy: float
+    projection_energy: float
+    content_matching_gain: float
+
+    sign_flip_p_value: float
+    sign_flip_p_value_fdr: float | None
+
     identical_pairs_median_abs_projection: float
     other_pairs_median_abs_projection: float
 
+    shuffled_positive_projection_ratio: float
+    shuffled_standardized_projection_mean: float
+    
 
 class Q4Results(TypedDict):
     corpus_name: str

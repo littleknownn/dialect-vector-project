@@ -15,7 +15,10 @@ from src.core.config_utils import (
     RealAaeSourceConfig,
     SupervisedDatasetConfig,
 )
-from src.core.utils import PoolingTypeEnum
+from src.core.utils import (
+    DifferenceVector,
+    PoolingTypeEnum,
+)
 
 
 EXPERIMENT_CONFIG = ExperimentConfig(
@@ -30,7 +33,7 @@ EXPERIMENT_CONFIG = ExperimentConfig(
     ],
 
     primary_layer = 14,
-    primary_pooling_type = PoolingTypeEnum.LAST,
+    primary_pooling_type = PoolingTypeEnum.BOUNDARY,
     
     debug_max_split_lines = None,
 
@@ -47,6 +50,7 @@ EXPERIMENT_CONFIG = ExperimentConfig(
     num_equal_n_repeats = 100,
     num_null_draws = 200,
     num_cv_folds = 5,
+
     q1_labeled_bounds = Q1LabeledThresholds(
         consistent=Q1Thresholds(
             positive_projection_ratio=0.90,
@@ -57,6 +61,10 @@ EXPERIMENT_CONFIG = ExperimentConfig(
             standardized_mean_ci_lower=0.5,
         ),
     ),
+    q1_fdr_vectors=(DifferenceVector.OFFSET, DifferenceVector.AUTHORSHIP, DifferenceVector.DIALECT),
+    q1_layer_sweep_vectors=(DifferenceVector.OFFSET,),
+    q1_num_sign_flips=10_000,
+    q1_num_shuffled_pairings=1_000,
 
     q4_orthographic_thresholds = Q4OrthographicThresholds(
         strict=0.75,

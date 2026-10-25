@@ -29,6 +29,7 @@ from src.core.paths import (
     verify_extraction_log,
 )
 from src.core.utils import (
+    DifferenceVector,
     H1Results,
     PoolingTypeEnum,
     load_json,
@@ -82,7 +83,7 @@ def _compute_h1_results(
         get_sweep_tensor_filepath(
             steering_estimators_dir,
             sweep_identifier,
-            f'{DIFFERENCE_VECTOR_PREFIX}{supervised_corpus_name}',
+            f'{DIFFERENCE_VECTOR_PREFIX}{supervised_corpus_name}{DifferenceVector.OFFSET}',
         ),
         weights_only=True,
     )

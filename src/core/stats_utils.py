@@ -147,6 +147,20 @@ def compute_fold_excluded_mean_vectors(
     return vector_mean_folds
 
 
+def compute_sign_flip_p_value(
+    projection: torch.Tensor,
+    num_flips: int,
+    seed: int,
+) -> float:
+    generator = torch.Generator().manual_seed(seed)
+    sign_vectors = -1 + 2 * torch.randint(0, 2, (num_flips, len(projection)), generator=generator).double()
+    projection_mean = projection.double().mean()
+    sign_flipped_means = (sign_vectors * projection.double()).mean(dim=1)
+    num_ge = int((sign_flipped_means >= projection_mean).sum())
+    p_value = (1 + num_ge) / (1 + num_flips)
+    return p_value
+
+
 def compute_fold_projections(
     difference_matrix: torch.Tensor,
     fold_ids: torch.Tensor,

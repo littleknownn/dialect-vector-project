@@ -4,6 +4,7 @@ import re
 from typing import NamedTuple
 
 from src.core.utils import (
+    DifferenceVector,
     PoolingTypeEnum,
     SplitSuffixes,
 )
@@ -71,7 +72,12 @@ class ExperimentConfig:
     num_equal_n_repeats: int
     num_null_draws: int
     num_cv_folds: int
+    
     q1_labeled_bounds: Q1LabeledThresholds
+    q1_fdr_vectors: tuple[DifferenceVector, ...]
+    q1_layer_sweep_vectors: tuple[DifferenceVector, ...]
+    q1_num_sign_flips: int
+    q1_num_shuffled_pairings: int
 
     q4_orthographic_thresholds: Q4OrthographicThresholds
     q4_function_words: tuple[str, ...]
