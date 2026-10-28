@@ -2,6 +2,7 @@ from collections import Counter
 from collections.abc import Callable
 import difflib
 import functools
+import math
 import re
 import string
 from typing import NamedTuple
@@ -11,6 +12,7 @@ import spacy
 import src.core.text_rules as text_rules
 from src.core.utils import (
     PairBoundary,
+    PairControls,
     PairEditData,
     Q4Stratum,
 )
@@ -31,42 +33,11 @@ class CandidateBoundary(NamedTuple):
     distance_from_midpoint: float
 
 
-def check_text_len_bounds(
-    text: str, 
-    min_len_chars: int,
-    min_len_words: int,
-    max_len_words: int | None,
-) -> bool:
-    num_chars = len(text)
-    num_words = len(text.split())
-    above_lower_bounds = min_len_chars <= num_chars and min_len_words <= num_words
-    below_upper_bounds = num_words <= max_len_words if max_len_words is not None else True
-    return above_lower_bounds and below_upper_bounds
-
-
-
-def clean_corpus_text(
-    text: str,
-    config: DatasetConfig,
-    cleanup_replace_map: dict[int, int | str | None] = text_rules.CLEANUP_REPLACEMENT_MAP,
-) -> str | None:
-    text = text.translate(cleanup_replace_map)
-    text_lowercase = text.lower()
-    for pattern in config.skipped_data_patterns:
-        if pattern.search(text_lowercase):
-            return None    
-    
-    for pattern, replacement in config.replacement_patterns:
-        text = pattern.sub(replacement, text)
-
-    if not (cleaned_text := text.strip()):
-        return None
-    
-    for pattern in config.skipped_case_patterns:
-        if pattern.search(cleaned_text):
-            return None
-    
-    return cleaned_text
+@functools.cache
+def _load_sentencizer() -> spacy.Language:
+    sentencizer = spacy.blank('en')
+    sentencizer.add_pipe('sentencizer')
+    return sentencizer
 
 
 def _normalize_word(
@@ -75,29 +46,7 @@ def _normalize_word(
     return word.lower().strip(_EDGE_PUNCTUATION)
 
 
-def get_matched_words(
-    text: str,
-    match_words: frozenset[str],
-) -> list[str]:
-    matches = [
-        word for word in map(_normalize_word, text.split())
-        if word in match_words
-    ]
-    return matches
-
-
-def has_masked_word(
-    text: str,
-) -> bool:
-    for word in text.lower().split():
-        word = word.strip(_MASK_EDGE_PUNCTUATION).lstrip('*')
-        word = text_rules.ACTION_MARKER_PATTERN.sub('', word)
-        if text_rules.MASKED_WORD_PATTERN.fullmatch(word):
-            return True
-    return False
-
-
-def _normalize_words(
+def normalize_words(
     text: str,
     replacement_patterns: tuple[tuple[str, str], ...] = text_rules.Q4_NORMALIZATION_REPLACEMENT_PATTERNS,
 ) -> list[str]:
@@ -112,14 +61,10 @@ def _classify_edit(
     sae_words: list[str],
     orthographic_threshold: float,
     function_words: tuple[str, ...],
+    non_alphanumeric_pattern: re.Pattern = text_rules.NON_ALPHANUMERIC_PATTERN,
 ) -> Q4Stratum:
-    def _get_letters(
-        words: list[str],
-    ) -> str:
-        return re.sub(r'[^\da-z]', '', ''.join(words))
-    
-    aae_letters = _get_letters(aae_words)
-    sae_letters = _get_letters(sae_words)
+    aae_letters = non_alphanumeric_pattern.sub('', ''.join(aae_words))
+    sae_letters = non_alphanumeric_pattern.sub('', ''.join(sae_words))
     if aae_letters and sae_letters:
         similarity = difflib.SequenceMatcher(None, aae_letters, sae_letters).ratio()
         if similarity >= orthographic_threshold:
@@ -177,38 +122,6 @@ def _get_stratum(
     return Q4Stratum.ORTHOGRAPHIC
 
 
-def compute_pair_edit_data(
-    aae_text: str,
-    sae_text: str,
-    orthographic_threshold: float,
-    function_words: tuple[str, ...],
-) -> PairEditData:
-    aae_words = _normalize_words(aae_text)
-    sae_words = _normalize_words(sae_text)
-
-    matcher = difflib.SequenceMatcher(None, aae_words, sae_words, autojunk=False)
-    edit_counts = Counter(
-        _classify_edit(aae_words[aae_start:aae_end], sae_words[sae_start:sae_end], orthographic_threshold, function_words)
-        for tag, aae_start, aae_end, sae_start, sae_end in matcher.get_opcodes()
-        if tag != 'equal'
-    )
-    
-    has_asterisk = '*' in aae_text or '*' in sae_text
-    pair_edit_data = PairEditData(
-        stratum=_get_stratum(aae_text, sae_text, edit_counts),
-        num_orthographic_edits=edit_counts[Q4Stratum.ORTHOGRAPHIC],
-        num_function_word_edits=edit_counts[Q4Stratum.FUNCTION_WORD],
-        num_lexical_edits=edit_counts[Q4Stratum.LEXICAL],
-        ending_changed=_get_ending_class(aae_text) != _get_ending_class(sae_text),
-        case_changed=_get_case_style(aae_text) != _get_case_style(sae_text),
-        tag_count_changed=_get_num_handle_tags(aae_text) != _get_num_handle_tags(sae_text),
-        has_asterisk=has_asterisk,
-        num_words_aae=len(aae_text.split()), # replace with more intuitive arg
-        num_words_sae=len(sae_text.split()), # replace with more intuitive arg
-    )
-    return pair_edit_data
-
-
 def _compute_candidate_boundaries(
     text_a: str,
     text_b: str,
@@ -259,6 +172,116 @@ def _compute_boundary(
     candidate_boundaries = _compute_candidate_boundaries(text_a, text_b, min_previous_words, min_following_words)
     boundary = min(candidate_boundaries, key=sort_fn, default=None)
     return boundary
+
+
+def check_text_len_bounds(
+    text: str, 
+    min_len_chars: int,
+    min_len_words: int,
+    max_len_words: int | None,
+) -> bool:
+    num_chars = len(text)
+    num_words = len(text.split())
+    above_lower_bounds = min_len_chars <= num_chars and min_len_words <= num_words
+    below_upper_bounds = num_words <= max_len_words if max_len_words is not None else True
+    return above_lower_bounds and below_upper_bounds
+
+
+def clean_corpus_text(
+    text: str,
+    config: DatasetConfig,
+    cleanup_replace_map: dict[int, int | str | None] = text_rules.CLEANUP_REPLACEMENT_MAP,
+) -> str | None:
+    text = text.translate(cleanup_replace_map)
+    text_lowercase = text.lower()
+    for pattern in config.skipped_data_patterns:
+        if pattern.search(text_lowercase):
+            return None    
+    
+    for pattern, replacement in config.replacement_patterns:
+        text = pattern.sub(replacement, text)
+
+    if not (cleaned_text := text.strip()):
+        return None
+    
+    for pattern in config.skipped_case_patterns:
+        if pattern.search(cleaned_text):
+            return None
+    
+    return cleaned_text
+
+
+def get_matched_words(
+    text: str,
+    match_words: frozenset[str],
+) -> list[str]:
+    matches = [
+        word for word in map(_normalize_word, text.split())
+        if word in match_words
+    ]
+    return matches
+
+
+def has_masked_word(
+    text: str,
+) -> bool:
+    for word in text.lower().split():
+        word = word.strip(_MASK_EDGE_PUNCTUATION).lstrip('*')
+        word = text_rules.ACTION_MARKER_PATTERN.sub('', word)
+        if text_rules.MASKED_WORD_PATTERN.fullmatch(word):
+            return True
+    return False
+
+
+def compute_pair_edit_data(
+    aae_text: str,
+    sae_text: str,
+    orthographic_threshold: float,
+    function_words: tuple[str, ...],
+) -> PairEditData:
+    aae_words = normalize_words(aae_text)
+    sae_words = normalize_words(sae_text)
+
+    matcher = difflib.SequenceMatcher(None, aae_words, sae_words, autojunk=False)
+    edit_counts = Counter(
+        _classify_edit(aae_words[aae_start:aae_end], sae_words[sae_start:sae_end], orthographic_threshold, function_words)
+        for tag, aae_start, aae_end, sae_start, sae_end in matcher.get_opcodes()
+        if tag != 'equal'
+    )
+    
+    has_asterisk = '*' in aae_text or '*' in sae_text
+    pair_edit_data = PairEditData(
+        stratum=_get_stratum(aae_text, sae_text, edit_counts),
+        num_orthographic_edits=edit_counts[Q4Stratum.ORTHOGRAPHIC],
+        num_function_word_edits=edit_counts[Q4Stratum.FUNCTION_WORD],
+        num_lexical_edits=edit_counts[Q4Stratum.LEXICAL],
+        ending_changed=_get_ending_class(aae_text) != _get_ending_class(sae_text),
+        case_changed=_get_case_style(aae_text) != _get_case_style(sae_text),
+        tag_count_changed=_get_num_handle_tags(aae_text) != _get_num_handle_tags(sae_text),
+        has_asterisk=has_asterisk,
+        num_words_aae=len(aae_text.split()), # replace with more intuitive arg
+        num_words_sae=len(sae_text.split()), # replace with more intuitive arg
+    )
+    return pair_edit_data
+
+
+def compute_pair_controls(
+    aae_text: str,
+    sae_text: str,
+    profanities: frozenset[str],
+) -> PairControls:
+    filter_flag_fn = lambda text: bool(
+        get_matched_words(text, profanities)
+        or has_masked_word(text)
+    )
+    num_aae_words = max(len(normalize_words(aae_text)), 1)
+    num_sae_words = max(len(normalize_words(sae_text)), 1)
+    pair_controls = PairControls(
+        aae_filter_flagged=filter_flag_fn(aae_text),
+        sae_filter_flagged=filter_flag_fn(sae_text),
+        log_length_ratio=math.log(num_aae_words / num_sae_words),
+    )
+    return pair_controls
 
 
 def compute_pair_boundary(
@@ -316,13 +339,6 @@ def compute_pair_boundary(
         is_aae_back_shared=is_aae_back_shared,
     )
     return pair_boundary
-
-
-@functools.cache
-def _load_sentencizer() -> spacy.Language:
-    sentencizer = spacy.blank('en')
-    sentencizer.add_pipe('sentencizer')
-    return sentencizer
 
 
 def sentencize(text: str) -> list[str]:

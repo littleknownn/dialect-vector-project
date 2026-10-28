@@ -1,5 +1,8 @@
 import hashlib
-from enum import StrEnum
+from enum import (
+    IntEnum,
+    StrEnum,
+)
 from pathlib import Path
 import json
 from typing import (
@@ -7,36 +10,23 @@ from typing import (
     Iterable,
     NamedTuple,
     TypedDict,
-    NotRequired,
 )
 
 import torch
 import torch.nn as nn
 
 
-type MetricsJson = dict[
-    str, dict[
-        str, dict[
-            str, dict
-        ]
-    ]
-]
-
-
-type GeometricSummary = list[GeometricMetricsData]
-
-
 type HiddenStateData = tuple[torch.Tensor, *tuple[Any, ...]]
 
 
-class PoolingTypeEnum(StrEnum):
+class PoolingType(StrEnum):
     LAST = 'last'
     MEAN = 'mean'
     BOUNDARY = 'boundary'
 
     @property
     def is_paired_only(self) -> bool:
-        return self is PoolingTypeEnum.BOUNDARY
+        return self is PoolingType.BOUNDARY
 
 
 class SplitSuffixes(StrEnum):
@@ -60,7 +50,7 @@ class AaeFeature(StrEnum):
     UNCONJUGATED_AINT = 'unconjugated_aint'
 
 
-class MetricTypeEnum(StrEnum):
+class MetricType(StrEnum):
     LLR_SHIFT = 'llr_shift'
     PERPLEXITY = 'perplexity'
 
@@ -88,12 +78,58 @@ class Q1ConsistencyLabel(StrEnum):
     POOLING_DEPENDENT = 'pooling_dependent'
 
 
+class Q3EditCount(StrEnum):
+    TOTAL = 'total'
+    ORTHOGRAPHIC = 'orthographic'
+    FUNCTION_WORD = 'function_word'
+    LEXICAL = 'lexical'
+    MECHANICS = 'mechanics'
+    PROBE_COUNT = 'probe_count'
+
+
+class Q4EditVerdict(StrEnum):
+    STRONGER = 'stronger'
+    WEAKER = 'weaker'
+    NOT_DIFFERENT = 'not_different'
+
+
 class Q4Stratum(StrEnum):
     IDENTICAL = 's0_identical'
     FORMAT_ONLY = 's1_format_only'
     ORTHOGRAPHIC = 's2_orthographic'
     FUNCTION_WORD = 's3_function_word'
     LEXICAL = 's4_lexical'
+
+
+class Q4EditKind(StrEnum):
+    ORTHOGRAPHIC = 'orthographic'
+    COPULA_ADDED = 'copula_added'
+    FUNCTION_WORD = 'function_word'
+    FILTER_FLAGGED_WORD = 'filter_flagged_word'
+    GRAMMAR_WORD = 'grammar_word'
+    ADDED_OR_DROPPED = 'added_or_dropped'
+    SHORTHAND_FUNCTION_WORDS = 'shorthand_function_words'
+    SHORTHAND_EXPANDED = 'shorthand_expanded'
+    CONTENT_CHANGE = 'content_change'
+    CAPITALIZATION = 'capitalization'
+    PUNCTUATION = 'punctuation'
+
+
+class Q4CurveFunction(StrEnum):
+    LOG = 'log'
+    CEILING = 'ceiling'
+    STRAIGHT = 'straight'
+    FREE_SHAPE = 'free_shape'
+
+
+class SeedOffset(IntEnum):
+    BOOTSTRAP = 1
+    SIGN_FLIP = 2
+    SHUFFLED_PAIRING = 3
+    HALF_SPLITS = 4
+    Q3_Q4_BOOTSTRAP = 8
+    Q4_HELD_OUT_FOLDS = 9
+    Q4_SHUFFLED_PROJECTIONS = 15
 
 
 class PairBoundary(TypedDict):
@@ -138,51 +174,24 @@ class CIStats(TypedDict):
     ci_upper: float
 
 
-class SweepMetric(TypedDict):
-    layer: int
-    pooling_type: PoolingTypeEnum
-    rank: int
-
-    corpus_name: str
-    estimator_name: str
-    alpha: float
-
-    metric: MetricTypeEnum
-    value: float
-
-    ci_lower: NotRequired[float]
-    ci_upper: NotRequired[float]
-    p_value: NotRequired[float]
-
-
-class GeometricMetricsData(TypedDict):
-    layer: int
-    pooling_type: PoolingTypeEnum
-    rank: int
-    estimator_a_name: str
-    estimator_b_name: str
-    principal_angles: float
-    chordal_distances: float
-
-
 class AucSummary(TypedDict):
     layer: int
-    pooling_type: PoolingTypeEnum
+    pooling_type: PoolingType
     rank: int
     estimator_name: str
     corpus_name: str
-    metric: MetricTypeEnum
+    metric: MetricType
     auc_pos: float
     auc_neg: float
 
 
 class FdrSummary(TypedDict):
     layer: int
-    pooling_type: PoolingTypeEnum
+    pooling_type: PoolingType
     rank: int
     estimator_name: str
     corpus_name: str
-    metric: MetricTypeEnum
+    metric: MetricType
     alpha: float
     p_value_fdr: float
 
@@ -194,11 +203,11 @@ class BehavioralSummary(TypedDict):
 
 class SweepSummary(TypedDict):
     layer: int
-    pooling_type: PoolingTypeEnum
+    pooling_type: PoolingType
     rank: int
     estimator_name: str
     corpus_name: str
-    metric: MetricTypeEnum
+    metric: MetricType
     alpha: float
     value: float
     p_value: float
@@ -217,7 +226,7 @@ class Q1Results(TypedDict):
     label: Q1ConsistencyLabel
     vector: DifferenceVector
     layer: int
-    pooling_type: PoolingTypeEnum
+    pooling_type: PoolingType
     num_pairs: int
     num_excluded_pairs: int
     
@@ -239,19 +248,62 @@ class Q1Results(TypedDict):
 
     shuffled_positive_projection_ratio: float
     shuffled_standardized_projection_mean: float
-    
+
+
+class Q3CountResults(TypedDict):
+    spearman_ci: CIStats
+    spearman_p_value: float
+    spearman_p_value_fdr: float | None
+    partial_spearman_ci: CIStats
+    projection_mean_ci_by_bin: dict[int, CIStats]
+
+
+class Q3Results(TypedDict):
+    corpus_name: str
+    pooling_type: PoolingType
+    count_results: dict[Q3EditCount, Q3CountResults]
+
+
+class Q4Edit(TypedDict):
+    kind: Q4EditKind
+    distance: int
+    size: int
+
+
+class Q4CurveResults(TypedDict):
+    curve: Q4CurveFunction
+    r_squared: float
+    held_out_r_squared: float
+    distance_decay_exponent: CIStats | None
+    size_exponent: CIStats
+    weights: dict[Q4EditKind, CIStats]
+    mean_marginal_effects_by_distance: dict[int, dict[Q4EditKind, float]]
+    shares: dict[Q4EditKind, CIStats]
+    format_flags_share: float
+    pair_controls_share: float
+    unexplained_share: float
+    calibration: list[list[float]]
+    mean_residual_by_kind: dict[Q4EditKind, float]
+    shuffled_r_squared: float
+
 
 class Q4Results(TypedDict):
     corpus_name: str
-    pooling_type: PoolingTypeEnum
+    pooling_type: PoolingType
     num_pairs_by_stratum: dict[Q4Stratum, int]
     mean_projection_by_stratum: dict[Q4Stratum, CIStats]
-    
-    group_shares: dict[str, CIStats]
-    r_squared: float
-    unique_r_squared: dict[str, CIStats]
-    contributing_groups: list[str]
-    dominating_groups: list[str]
+
+    num_edits_by_kind: dict[Q4EditKind, int]
+    curve_results: dict[Q4CurveFunction, Q4CurveResults]
+    ceiling_minus_log_held_out_r_squared: CIStats
+    verdicts: dict[Q4EditKind, Q4EditVerdict] | None
+    single_edit_weights: dict[Q4EditKind, CIStats] | None
+
+
+class PairControls(TypedDict):
+    aae_filter_flagged: bool
+    sae_filter_flagged: bool
+    log_length_ratio: float
 
 
 class PairEditData(TypedDict):
@@ -279,9 +331,16 @@ class LineAnnotations(TypedDict):
     profanity_matches: list[str]
 
 
-class PairAnnotations(TypedDict):
+class TextPairAnnotations(TypedDict):
     edit_data_by_threshold: dict[str, PairEditData]
-    context_edit_data_by_threshold: dict[str, PairEditData] | None
+    edits: list[Q4Edit]
+    controls: PairControls
+    num_aae_features: int
+
+
+class PairAnnotations(TypedDict):
+    line: TextPairAnnotations
+    context: TextPairAnnotations | None
 
 
 class ExtractionLog(TypedDict):
@@ -294,6 +353,12 @@ class ExtractionLog(TypedDict):
     num_truncated_lines_by_split: dict[str, int]
 
 
+class FreezeRecord(TypedDict):
+    git_commit: setattr
+    experiment_config: dict[str, Any]
+    processed_data_hashes: dict[str, str]
+
+
 class GeometricMetricsPair(NamedTuple):
     principal_angles: float
     chordal_distance: float
@@ -301,11 +366,20 @@ class GeometricMetricsPair(NamedTuple):
 
 class SweepKey(NamedTuple):
     layer: int
-    pooling_type: PoolingTypeEnum
+    pooling_type: PoolingType
     rank: int
     estimator_name: str
     corpus_name: str
-    metric: MetricTypeEnum
+    metric: MetricType
+
+
+class Q4TaggerInputs(NamedTuple):
+    function_words: frozenset[str]
+    grammar_words: frozenset[str]
+    copula_words: frozenset[str]
+    profanities: frozenset[str]
+    respelling_threshold: float
+    single_letter_respelling_threshold: float
 
 
 class EstimatorSteering:

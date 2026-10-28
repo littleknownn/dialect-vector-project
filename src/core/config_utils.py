@@ -5,7 +5,10 @@ from typing import NamedTuple
 
 from src.core.utils import (
     DifferenceVector,
-    PoolingTypeEnum,
+    PoolingType,
+    Q3EditCount,
+    Q4CurveFunction,
+    Q4EditKind,
     SplitSuffixes,
 )
 
@@ -32,24 +35,17 @@ class Q1LabeledThresholds(NamedTuple):
     weak: Q1Thresholds
 
 
-class Q4GroupLabelThresholds(NamedTuple):
-    contribution_share_ci_lower: float
-    contribution_unique_r_squared_ci_lower: float
-    dominant_share: float
+class Q4RegressionSettings(NamedTuple):
+    free_shape_breakpoints: tuple[float, ...]
+    initial_parameters_by_curve: dict[Q4CurveFunction, tuple[float, ...]]
+    initial_distance_decay_exponent: float
+    initial_size_exponent: float
 
 
 class Q4OrthographicThresholds(NamedTuple):
     strict: float
     relaxed: float
     loose: float
-
-
-class Q4TagsPerGroup(NamedTuple):
-    orthographic: list[str]
-    function_word: list[str]
-    lexical: list[str]
-    format: list[str]
-    length: list[str]
 
 
 @dataclass
@@ -63,7 +59,7 @@ class ExperimentConfig:
     target_alphas: list[float]
 
     primary_layer: int
-    primary_pooling_type: PoolingTypeEnum
+    primary_pooling_type: PoolingType
 
     debug_max_split_lines: int | None
 
@@ -79,12 +75,24 @@ class ExperimentConfig:
     q1_num_sign_flips: int
     q1_num_shuffled_pairings: int
 
-    q4_orthographic_thresholds: Q4OrthographicThresholds
-    q4_function_words: tuple[str, ...]
-    q4_tags_per_group: Q4TagsPerGroup
-    q4_group_label_thresholds: Q4GroupLabelThresholds
-    q4_log_centered_features: tuple[str, ...]
+    q3_edits_by_count: dict[Q3EditCount, tuple[Q4EditKind, ...]]
+    q3_num_dose_bins: int
+    q3_q4_pooling_types: tuple[PoolingType, ...]
 
+    q4_primary_curves: tuple[Q4CurveFunction, ...]
+    q4_orthographic_thresholds: Q4OrthographicThresholds
+    q4_respelling_threshold: float
+    q4_single_letter_respelling_threshold: float
+    q4_function_words: tuple[str, ...]
+    q4_grammar_words: tuple[str, ...]
+    q4_copula_words: tuple[str, ...]
+    q4_format_flags: tuple[str, ...]
+    q4_regression_settings: Q4RegressionSettings
+    q4_num_held_out_folds: int
+    q4_num_calibration_bins: int
+    q4_num_bootstrap_samples: int
+    q4_marginal_effect_distances: tuple[int, ...]
+    
     corpus_split_size: int
     batch_size: int
     max_seq_len: int

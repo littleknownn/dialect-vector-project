@@ -17,8 +17,8 @@ from src.core.utils import (
     AucSummary,
     BehavioralSummary,
     FdrSummary,
-    MetricTypeEnum,
-    PoolingTypeEnum,
+    MetricType,
+    PoolingType,
     SweepKey,
     SweepSummary,
     load_json,
@@ -46,8 +46,8 @@ def _load_steering_metric_sweeps(
     for filepath in in_dir.glob('*.json'):
         metrics = load_json(filepath)
         for metric_data in metrics: # deserialization boundary
-            metric_data['pooling_type'] = PoolingTypeEnum(metric_data['pooling_type'])
-            metric_data['metric'] = MetricTypeEnum(metric_data['metric'])
+            metric_data['pooling_type'] = PoolingType(metric_data['pooling_type'])
+            metric_data['metric'] = MetricType(metric_data['metric'])
             sweep_key = SweepKey(
                 **{key: metric_data[key] for key in SweepKey._fields}
             )
@@ -101,7 +101,7 @@ def _compute_behavioral_results(
             x=[point.alpha for point in neg_points],
         ))
 
-        if sweep_key.metric == MetricTypeEnum.LLR_SHIFT:
+        if sweep_key.metric == MetricType.LLR_SHIFT:
             for point in curve_points:
                 if point.p_value is not None:
                     llr_p_values.append(point.p_value)

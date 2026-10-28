@@ -1,5 +1,6 @@
 from collections.abc import Callable
 
+from scipy.stats import rankdata
 import torch
 import torch.nn.functional as F
 
@@ -7,7 +8,47 @@ from src.core.utils import CIStats
 import src.core.math_utils as math_utils
 
 
-type GroupStatistic = Callable[[torch.Tensor, torch.Tensor, list[list[int]]], torch.Tensor]
+def _compute_ranks(
+    values: torch.Tensor,
+) -> torch.Tensor:
+    ranks = torch.from_numpy(rankdata(values.numpy(), axis=-2))
+    return ranks
+
+
+def _compute_correlation(
+    tensor_a: torch.Tensor,
+    tensor_b: torch.Tensor,
+) -> torch.Tensor:
+    centered_a = tensor_a - tensor_a.mean(dim=-1, keepdim=True)
+    centered_b = tensor_b - tensor_b.mean(dim=-1, keepdim=True)
+    correlation = (centered_a * centered_b).sum(dim=-1) / (
+        torch.linalg.vector_norm(centered_a, dim=-1)
+        * torch.linalg.vector_norm(centered_b, dim=-1)
+    )
+    return correlation
+
+
+def compute_spearman(
+    values: torch.Tensor,
+) -> torch.Tensor:
+    ranks = _compute_ranks(values)
+    spearman = _compute_correlation(ranks[..., 0], ranks[..., 1])
+    return spearman
+
+
+def compute_partial_spearman(
+    values: torch.Tensor,
+) -> torch.Tensor:
+    ranks = _compute_ranks(values)
+    design_matrix = torch.stack([torch.ones_like(ranks[..., 2]), ranks[..., 2]], dim=-1)
+    residualize_fn = lambda column : column - (
+        design_matrix @ compute_regression_coefficients(design_matrix, column).unsqueeze(-1)
+    ).squeeze(-1)
+    partial_spearman = _compute_correlation(
+        residualize_fn(ranks[..., 0]),
+        residualize_fn(ranks[..., 1]),
+    )
+    return partial_spearman
 
 
 def compute_bootstrap_draws(
@@ -77,46 +118,14 @@ def compute_regression_coefficients(
     return coefficients
 
 
-def compute_group_shares(
-    feature_matrix: torch.Tensor,
-    targets: torch.Tensor,
-    group_feature_indices: list[list[int]],
-) -> torch.Tensor:
-    coefficients = compute_regression_coefficients(feature_matrix, targets)
-    contributions = coefficients * feature_matrix.mean(dim=-2)
-    group_contributions = torch.stack(
-        [contributions[..., feature_indices].sum(dim=-1) for feature_indices in group_feature_indices],
-        dim=-1,
-    )
-    group_shares = group_contributions / targets.mean(dim=-1, keepdim=True)
-    return group_shares
-
-
 def compute_r_squared(
-    feature_matrix: torch.Tensor,
+    predictions: torch.Tensor,
     targets: torch.Tensor,
 ) -> torch.Tensor:
-    coefficients = compute_regression_coefficients(feature_matrix, targets)
-    predictions = (feature_matrix @ coefficients.unsqueeze(-1)).squeeze(-1)
-    residual_sum_of_squares = ((targets - predictions) ** 2).sum(dim=-1)
-    total_sum_of_squares = ((targets - targets.mean(dim=-1, keepdim=True)) ** 2).sum(dim=-1)
-    return 1 - residual_sum_of_squares / total_sum_of_squares
-
-
-def compute_unique_r_squared(
-    feature_matrix: torch.Tensor,
-    targets: torch.Tensor,
-    group_feature_indices: list[list[int]],
-) -> torch.Tensor:
-    full_r_squared = compute_r_squared(feature_matrix, targets)
-    num_features = feature_matrix.shape[-1]
-    unique_r_squared_list = []
-    for feature_indices in group_feature_indices:
-        held_in_features = [feature for feature in range(num_features) if feature not in feature_indices]
-        reduced_r_squared = compute_r_squared(feature_matrix[..., held_in_features], targets)
-        unique_r_squared_list.append(full_r_squared - reduced_r_squared)
-    unique_r_squared = torch.stack(unique_r_squared_list, dim=-1)
-    return unique_r_squared
+    residual_sum_of_squares = (targets - predictions).square().sum(dim=-1)
+    total_sum_of_squares = (targets - targets.mean(dim=-1, keepdim=True)).square().sum(dim=-1)
+    r_squared = 1 - residual_sum_of_squares / total_sum_of_squares
+    return r_squared
 
 
 def make_fold_ids(
@@ -173,3 +182,23 @@ def compute_fold_projections(
         fold_mask = (fold_ids == fold_id)
         projections[fold_mask] = difference_matrix[fold_mask] @ unit_differences[:, fold_id]
     return projections
+
+
+def compute_calibration(
+    predictions: torch.Tensor,
+    targets: torch.Tensor,
+    num_bins: int,
+) -> list[list[float]]:
+    bin_edges = torch.quantile(
+        predictions,
+        torch.linspace(0, 1, num_bins + 1, dtype=predictions.dtype)[1:-1],
+    )
+    bin_ids = torch.searchsorted(bin_edges, predictions)
+    calibration = [
+        [
+            float(predictions[bin_ids == bin_id].mean()),
+            float(targets[bin_ids == bin_id].mean()),
+        ]
+        for bin_id in range(num_bins)
+    ]
+    return calibration

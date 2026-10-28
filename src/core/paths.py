@@ -8,7 +8,7 @@ from src.core.config_utils import (
     ExperimentConfig,
 )
 from src.core.utils import (
-    PoolingTypeEnum,
+    PoolingType,
     compute_file_hashes,
     load_json,
 )
@@ -41,9 +41,11 @@ Q1_FOLD_MEAN_VECTORS_PREFIX = 'fold_mean_vectors_'
 Q1_PROJECTIONS_PREFIX = 'q1_projections_'
 Q1_RESULTS_PREFIX = 'q1_results_'
 
+Q3_RESULTS_PREFIX = 'q3_results_'
 Q4_RESULTS_PREFIX = 'q4_results_'
 PAIR_EDIT_DATA_PREFIX = 'q4_pair_edit_data_'
 DIFFERENCE_VECTOR_PREFIX = 'difference_vector_'
+
 
 class RunDirs(NamedTuple):
     text_annotations: Path
@@ -101,7 +103,7 @@ def get_sweep_tensor_filepath(
 
 def get_sweep_identifier(
     layer: int,
-    pooling_type: PoolingTypeEnum,
+    pooling_type: PoolingType,
     rank: int | None = None,
 ) -> str:
     identifier = f'layer{layer:02d}_{pooling_type}'

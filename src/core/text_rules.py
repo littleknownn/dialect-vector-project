@@ -58,7 +58,19 @@ MASKED_WORD_PATTERN: re.Pattern = re.compile(
 
 
 # Q4
+TEXT_UNIT_PATTERN: re.Pattern = re.compile(r"[A-Za-z0-9']+|[^\sA-Za-z0-9']") # LLM-generated
+NON_ALPHANUMERIC_PATTERN: re.Pattern = re.compile(r'[^\da-z]')
+REPEATED_LETTER_PATTERN: re.Pattern = re.compile(r'(.)\1{2,}')
+VOWEL_PATTERN: re.Pattern = re.compile(r'[aeiouy]') # includes y
+VOWELS: str = 'aeiou'
+
 Q4_NORMALIZATION_REPLACEMENT_PATTERNS: tuple[tuple[str, str], ...] = (
-    (r'&', ' and '),
+    (r'&+', ' and '),
     (re.escape(MENTION_PLACEHOLDER), ''),
+    (r'(?<=\w\w)-+(?=\w\w)', ' '),
+    (r'(?<=\w)\.{2,}(?=[#@\w])', ' '),
+    (r'(?<=[A-Za-z]{2})\.(?=[A-Za-z]{2})|(?<=\b[iI])\.(?=[A-Za-z]{2})', ' '),
+)
+Q4_NEGATION_PATTERN: re.Pattern = re.compile(
+    r"(?:n't$|^(?:do|does|did|have|has|had|is|was|were|are|ca|wo|could|would|should|must|need|ai|might)nt$|^cannot$|^not$|^no$|^never$|^ain$|^nt$)"
 )

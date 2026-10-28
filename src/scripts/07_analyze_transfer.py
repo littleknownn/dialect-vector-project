@@ -31,7 +31,7 @@ from src.core.paths import (
 from src.core.utils import (
     DifferenceVector,
     H1Results,
-    PoolingTypeEnum,
+    PoolingType,
     load_json,
     save_json,
 )
@@ -45,7 +45,7 @@ class H1Data(NamedTuple):
 
 ### H1 ###
 def _load_h1_data(
-    pooling_type: PoolingTypeEnum,
+    pooling_type: PoolingType,
     experiment_config: ExperimentConfig,
     in_dir: Path,
 ) -> H1Data:
@@ -72,7 +72,7 @@ def _load_h1_data(
 
 def _compute_h1_results(
     h1_data: H1Data,
-    pooling_type: PoolingTypeEnum,
+    pooling_type: PoolingType,
     experiment_config:  ExperimentConfig,
     steering_estimators_dir: Path,
     supervised_corpus_name: str,
@@ -132,7 +132,7 @@ def _compute_h1_results(
 
 def _compute_and_save_h1_results(
     pair: SupervisedPair,
-    pooling_type: PoolingTypeEnum,
+    pooling_type: PoolingType,
     experiment_config: ExperimentConfig,
     run_dirs: RunDirs,
     h1_results_filename: str,
@@ -153,7 +153,7 @@ def compute_and_save_metrics(
     h1_results_filename: str = H1_RESULTS_FILENAME,
 ) -> None:
     supervised_pairs = get_estimator_data(corpus_config).supervised_split_pairs
-    for pair, pooling_type in itertools.product(supervised_pairs, PoolingTypeEnum):
+    for pair, pooling_type in itertools.product(supervised_pairs, PoolingType):
         if not pooling_type.is_paired_only:
             _compute_and_save_h1_results(pair, pooling_type, experiment_config, run_dirs, h1_results_filename)
 

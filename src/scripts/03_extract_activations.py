@@ -34,7 +34,7 @@ from src.core.paths import (
 )
 from src.core.utils import (
     ExtractionLog,
-    PoolingTypeEnum,
+    PoolingType,
     SplitSuffixes,
     compute_file_hashes,
     get_boundary_token_idx,
@@ -45,7 +45,7 @@ from src.core.utils import (
 
 
 class ExtractedActivations(NamedTuple):
-    activation_matrices_by_layer: dict[int, dict[PoolingTypeEnum, torch.Tensor]]
+    activation_matrices_by_layer: dict[int, dict[PoolingType, torch.Tensor]]
     token_states: list[torch.Tensor]
 
 
@@ -128,13 +128,13 @@ def _extract_activations(
             summed_activations = (layer_activations * mean_pooling_mask).sum(dim=1)
             mean_activation = summed_activations / mean_pooling_mask.sum(dim=1)
 
-            activations_by_layer[layer][PoolingTypeEnum.LAST].append(last_activation.cpu())
-            activations_by_layer[layer][PoolingTypeEnum.MEAN].append(mean_activation.cpu())
+            activations_by_layer[layer][PoolingType.LAST].append(last_activation.cpu())
+            activations_by_layer[layer][PoolingType.MEAN].append(mean_activation.cpu())
 
             if boundary_char_indices is not None:
                 boundary_activation = layer_activations[token_indices_batched, boundary_token_indices, :]
                 boundary_activation = torch.where(has_boundary.unsqueeze(-1), boundary_activation, torch.nan)
-                activations_by_layer[layer][PoolingTypeEnum.BOUNDARY].append(boundary_activation.cpu())
+                activations_by_layer[layer][PoolingType.BOUNDARY].append(boundary_activation.cpu())
 
     activation_matrices_by_layer = {
         layer: {

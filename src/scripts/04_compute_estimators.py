@@ -34,7 +34,7 @@ from src.core.paths import (
 import src.core.stats_utils as stats_utils
 from src.core.utils import (
     DifferenceVector,
-    PoolingTypeEnum,
+    PoolingType,
     SplitSuffixes,
     load_json,
     save_json,
@@ -146,7 +146,7 @@ def _get_split_lists(
 def _save_estimators(
     estimators: dict[str, torch.Tensor],
     layer: int,
-    pooling_type: PoolingTypeEnum,
+    pooling_type: PoolingType,
     out_dir: Path,
 ) -> None:
     sweep_identifier = get_sweep_identifier(layer, pooling_type, 1)
@@ -269,7 +269,7 @@ def _compute_estimators(
     supervised_pair_masks_dict: dict[str, PairMasks],
     fold_ids_dict: dict[str, torch.Tensor],
     layer: int,
-    pooling_type: PoolingTypeEnum,
+    pooling_type: PoolingType,
     experiment_config: ExperimentConfig,
     run_dirs: RunDirs,
 ) -> Estimators:
@@ -310,7 +310,7 @@ def compute_and_save_estimators(
 
     sweep_tuples = itertools.product(
         experiment_config.target_layers,
-        PoolingTypeEnum,
+        PoolingType,
     )
     supervised_pair_masks_dict = {
         pair.corpus_name: _load_supervised_pair_masks(pair, experiment_config, run_dirs.text_annotations, processed_data_dir)
