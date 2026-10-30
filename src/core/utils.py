@@ -1,4 +1,3 @@
-import hashlib
 from enum import (
     IntEnum,
     StrEnum,
@@ -11,12 +10,6 @@ from typing import (
     NamedTuple,
     TypedDict,
 )
-
-import torch
-import torch.nn as nn
-
-
-type HiddenStateData = tuple[torch.Tensor, *tuple[Any, ...]]
 
 
 class PoolingType(StrEnum):
@@ -41,6 +34,20 @@ class SplitSuffixes(StrEnum):
     POOL = '_pool'
     PAIR_ANNOTATIONS = '_pair_annotations'
     SPEAKERS = '_speakers'
+
+
+class RunMode(StrEnum):
+    DEVELOPMENT = 'development'
+    FREEZE = 'freeze'
+    TESTING = 'testing'
+
+    @property
+    def split_suffix(self) -> SplitSuffixes:
+        return (
+            SplitSuffixes.TESTING
+            if self is RunMode.TESTING
+            else SplitSuffixes.SUPERVISED
+        )
 
 
 class AaeFeature(StrEnum):
@@ -354,7 +361,7 @@ class ExtractionLog(TypedDict):
 
 
 class FreezeRecord(TypedDict):
-    git_commit: setattr
+    source_code_hashes: dict[str, str]
     experiment_config: dict[str, Any]
     processed_data_hashes: dict[str, str]
 
@@ -380,51 +387,6 @@ class Q4TaggerInputs(NamedTuple):
     profanities: frozenset[str]
     respelling_threshold: float
     single_letter_respelling_threshold: float
-
-
-class EstimatorSteering:
-    def __init__(
-        self,
-        estimator_matrix: torch.Tensor,
-        layer_module: int,
-        alpha: float,
-        act_add: bool = False,
-    ):
-        self.estimator_matrix = estimator_matrix
-        self.layer_module = layer_module
-        self.alpha = alpha
-        self.act_add = act_add
-        self.forward_hook = None
-
-        if act_add:
-            assert estimator_matrix.shape[1] == 1, 'ActAdd Steering requires a Rank-1 Estimator'
-
-    def __enter__(self):
-        self.forward_hook = self.layer_module.register_forward_hook(self._hook)
-        return self
-
-    def __exit__(self, exc_type, exc, tb):
-        if self.forward_hook is not None:
-            self.forward_hook.remove()
-
-    def _hook(
-        self,
-        target_layer: nn.Module,
-        previous_layer_inputs: HiddenStateData,
-        previous_layer_outputs: torch.Tensor | HiddenStateData,
-    ) -> torch.Tensor | HiddenStateData:
-        is_output_wrapped = isinstance(previous_layer_outputs, tuple)
-        hidden_states = previous_layer_outputs[0] if is_output_wrapped else previous_layer_outputs
-
-        if self.act_add:
-            steered_hidden_states = hidden_states + self.alpha * self.estimator_matrix.T
-        else:
-            subspace_projection = (hidden_states @ self.estimator_matrix) @ self.estimator_matrix.T
-            steered_hidden_states = hidden_states + (self.alpha * subspace_projection)
-
-        if is_output_wrapped:
-            return (steered_hidden_states, *previous_layer_outputs[1:])
-        return steered_hidden_states
 
 
 def save_jsonl(
@@ -463,49 +425,3 @@ def load_json(
 ) -> dict | list:
     with open(filepath, 'r', encoding='utf-8') as file:
         return json.load(file)
-
-
-def compute_file_hashes(
-    in_dir: Path,
-) -> dict[str, str]:
-    file_hashes = {
-        path.name: hashlib.sha256(path.read_bytes()).hexdigest()
-        for path in sorted(in_dir.iterdir())
-        if path.is_file()
-    }
-    return file_hashes
-
-
-def load_boundary_char_indices_by_split(
-    in_dir: Path,
-) -> dict[str, list[int | None]]:
-    boundary_keys = {
-        SplitSuffixes.AAE: 'aae_idx', #
-        SplitSuffixes.SAE: 'sae_idx', #
-        SplitSuffixes.AAE_BACK: 'aae_back_idx', #
-    }
-    boundary_char_indices_by_split = {}
-    for metadata_filepath in  in_dir.glob(f'*{SplitSuffixes.PAIR_METADATA}*.json'):
-        corpus_name, split_suffix = metadata_filepath.stem.split(SplitSuffixes.PAIR_METADATA)
-        pair_metadata = load_json(metadata_filepath)
-        for dialect_suffix, boundary_key in boundary_keys.items():
-            split_name = f'{corpus_name}{dialect_suffix}{split_suffix}'
-            boundary_char_indices_by_split[split_name] = [
-                metadata['boundary'][boundary_key]
-                if metadata['boundary'] else None
-                for metadata in pair_metadata
-            ]
-    return boundary_char_indices_by_split
-
-
-def get_boundary_token_idx(
-    token_char_indices: torch.Tensor,
-    boundary_char_idx: int,
-) -> int:
-    token_end_char_indices = token_char_indices[:, 1]
-    is_before_boundary = (
-        (token_end_char_indices > 0)
-        & (token_end_char_indices <= boundary_char_idx)
-    )
-    boundary_token_idx = int(is_before_boundary.nonzero().max())
-    return boundary_token_idx

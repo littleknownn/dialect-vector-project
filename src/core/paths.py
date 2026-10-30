@@ -1,21 +1,13 @@
-import dataclasses
-import json
 from pathlib import Path
 from typing import NamedTuple
 
-from src.core.config_utils import (
-    LOGGED_EXPERIMENT_CONFIG_FIELDS,
-    ExperimentConfig,
-)
-from src.core.utils import (
-    PoolingType,
-    compute_file_hashes,
-    load_json,
-)
+from src.core.config_utils import ExperimentConfig
+from src.core.utils import PoolingType
 
 
 CORE_DIR = Path(__file__).parent
 SRC_DIR = CORE_DIR.parent
+SCRIPTS_DIR = SRC_DIR / 'scripts'
 ROOT_DIR = SRC_DIR.parent
 
 DATA_DIR = ROOT_DIR / 'data'
@@ -27,6 +19,7 @@ RUNS_DIR = DATA_DIR / 'runs'
 PROFANITY_LIST_FILENAME = 'profanity_list'
 PROCESSING_LOG_FILENAME = 'processing_log'
 EXTRACTION_LOG_FILENAME = 'extraction_log'
+FREEZE_RECORD_FILENAME = 'freeze_record'
 
 BEHAVIORAL_RESULTS_FILENAME = 'behavioral_results'
 SWEEP_RESULTS_FILENAME = 'sweep_results'
@@ -36,25 +29,25 @@ H1_SVD_PREFIX = 'svd_'
 H1_NULL_PREFIX = 'null_'
 H1_FLOORS_PREFIX = 'floors_'
 
-Q1_FOLD_IDS_PREFIX = 'fold_ids_'
-Q1_FOLD_MEAN_VECTORS_PREFIX = 'fold_mean_vectors_'
 Q1_PROJECTIONS_PREFIX = 'q1_projections_'
 Q1_RESULTS_PREFIX = 'q1_results_'
-
 Q3_RESULTS_PREFIX = 'q3_results_'
 Q4_RESULTS_PREFIX = 'q4_results_'
+
+FOLD_IDS_PREFIX = 'fold_ids_'
 PAIR_EDIT_DATA_PREFIX = 'q4_pair_edit_data_'
-DIFFERENCE_VECTOR_PREFIX = 'difference_vector_'
 
 
 class RunDirs(NamedTuple):
     text_annotations: Path
     activations: Path
     token_states: Path
-    steering_estimators: Path
+    
+    difference_vectors: Path
     h1_estimators: Path
-    q1_estimators: Path
+    fold_vectors: Path
     sweeps: Path
+
     pair_results: Path
     transfer_results: Path
     steering_results: Path
@@ -75,10 +68,12 @@ def get_run_dirs(
         text_annotations=run_dir / '02_text_annotations',
         activations=activations_dir,
         token_states=activations_dir / 'token_states',
-        steering_estimators=estimators_dir / 'steering',
+        
+        difference_vectors=estimators_dir / 'difference_vectors',
         h1_estimators=estimators_dir / 'h1',
-        q1_estimators=estimators_dir / 'q1',
+        fold_vectors=estimators_dir / 'fold_vectors',
         sweeps=run_dir / '05_sweeps',
+        
         pair_results=run_dir / '06_pair',
         transfer_results=run_dir / '07_transfer',
         steering_results=run_dir / '08_steering',
@@ -111,31 +106,3 @@ def get_sweep_identifier(
         identifier += f'_{rank:02d}'
     return identifier
 
-
-def verify_extraction_log(
-    experiment_config: ExperimentConfig,
-    run_dirs: RunDirs,
-    processed_data_dir: Path = PROCESSED_DATA_DIR,
-    logged_experiment_config_fields: tuple[str, ...] = LOGGED_EXPERIMENT_CONFIG_FIELDS,
-) -> None:
-    extraction_log = load_json(run_dirs.activations / f'{EXTRACTION_LOG_FILENAME}.json')
-    logged_config = extraction_log['experiment_config']
-    logged_hashes = extraction_log['processed_data_hashes']
-    current_config = json.loads(json.dumps(dataclasses.asdict(experiment_config))) # simulate pre-logging
-    current_hashes = compute_file_hashes(processed_data_dir)
-
-    mismatched_fields = [
-        field for field in logged_experiment_config_fields
-        if logged_config[field] != current_config[field]
-    ]
-    mismatched_files = sorted(
-        filename for filename in logged_hashes.keys() | current_hashes.keys()
-        if logged_hashes.get(filename) != current_hashes.get(filename)
-    )
-
-    if mismatched_fields or mismatched_files:
-        raise ValueError(
-            'Stored activations do not match the current setup.\n'
-            f'Configuration fields not matching: {mismatched_fields}\n'
-            f'Processed files not matching: {mismatched_files}'
-        )

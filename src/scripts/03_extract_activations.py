@@ -1,5 +1,4 @@
 from collections import defaultdict
-import dataclasses
 import gc
 import itertools
 from pathlib import Path
@@ -24,6 +23,10 @@ from src.core.config_utils import (
     SupervisedDatasetConfig,
     get_dataset_config,
 )
+from src.core.data_provenance import (
+    compute_file_hashes,
+    serialize_config,
+)
 from src.core.paths import (
     EXTRACTION_LOG_FILENAME,
     PROCESSED_DATA_DIR,
@@ -36,9 +39,7 @@ from src.core.utils import (
     ExtractionLog,
     PoolingType,
     SplitSuffixes,
-    compute_file_hashes,
-    get_boundary_token_idx,
-    load_boundary_char_indices_by_split,
+    load_json,
     load_jsonl,
     save_json,
 )
@@ -110,7 +111,7 @@ def _extract_activations(
             )
             boundary_token_indices = torch.tensor(
                 [
-                    get_boundary_token_idx(
+                    _get_boundary_token_idx(
                         line_token_char_indices,
                         boundary_char_idx,
                     )
@@ -171,6 +172,41 @@ def _compute_num_truncated_lines(
     return num_truncated_lines
 
 
+def _load_boundary_char_indices_by_split(
+    in_dir: Path,
+) -> dict[str, list[int | None]]:
+    boundary_keys = {
+        SplitSuffixes.AAE: 'aae_idx', #
+        SplitSuffixes.SAE: 'sae_idx', #
+        SplitSuffixes.AAE_BACK: 'aae_back_idx', #
+    }
+    boundary_char_indices_by_split = {}
+    for metadata_filepath in  in_dir.glob(f'*{SplitSuffixes.PAIR_METADATA}*.json'):
+        corpus_name, split_suffix = metadata_filepath.stem.split(SplitSuffixes.PAIR_METADATA)
+        pair_metadata = load_json(metadata_filepath)
+        for dialect_suffix, boundary_key in boundary_keys.items():
+            split_name = f'{corpus_name}{dialect_suffix}{split_suffix}'
+            boundary_char_indices_by_split[split_name] = [
+                metadata['boundary'][boundary_key]
+                if metadata['boundary'] else None
+                for metadata in pair_metadata
+            ]
+    return boundary_char_indices_by_split
+
+
+def _get_boundary_token_idx(
+    token_char_indices: torch.Tensor,
+    boundary_char_idx: int,
+) -> int:
+    token_end_char_indices = token_char_indices[:, 1]
+    is_before_boundary = (
+        (token_end_char_indices > 0)
+        & (token_end_char_indices <= boundary_char_idx)
+    )
+    boundary_token_idx = int(is_before_boundary.nonzero().max())
+    return boundary_token_idx
+
+
 def extract_and_save_activations(
     model: PreTrainedModel,
     tokenizer: PreTrainedTokenizerBase,
@@ -181,7 +217,7 @@ def extract_and_save_activations(
     in_dir: Path = PROCESSED_DATA_DIR,
 ) -> None:
     model.eval()
-    boundary_char_indices_by_split = load_boundary_char_indices_by_split(in_dir)
+    boundary_char_indices_by_split = _load_boundary_char_indices_by_split(in_dir)
     num_lines_by_split = {}
     num_truncated_lines_by_split = {}
     for corpus_path in sorted(in_dir.glob('*.jsonl')):
@@ -225,7 +261,7 @@ def extract_and_save_activations(
         model_hf_path=experiment_config.model_hf_path,
         torch_version=torch.__version__,
         transformers_version=transformers.__version__,
-        experiment_config=dataclasses.asdict(experiment_config),
+        experiment_config=serialize_config(experiment_config),
         processed_data_hashes=compute_file_hashes(in_dir),
         num_lines_by_split=num_lines_by_split,
         num_truncated_lines_by_split=num_truncated_lines_by_split,

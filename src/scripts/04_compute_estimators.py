@@ -16,12 +16,11 @@ from src.core.config_utils import (
     SupervisedPair,
     get_estimator_data,
 )
+from src.core.data_provenance import verify_extraction_log
 import src.core.math_utils as math_utils
 from src.core.paths import (
-    DIFFERENCE_VECTOR_PREFIX,
+    FOLD_IDS_PREFIX,
     PROCESSED_DATA_DIR,
-    Q1_FOLD_IDS_PREFIX,
-    Q1_FOLD_MEAN_VECTORS_PREFIX,
     H1_FLOORS_PREFIX,
     H1_NULL_PREFIX,
     H1_SVD_PREFIX,
@@ -29,7 +28,6 @@ from src.core.paths import (
     get_run_dirs,
     get_sweep_identifier,
     get_sweep_tensor_filepath,
-    verify_extraction_log,
 )
 import src.core.stats_utils as stats_utils
 from src.core.utils import (
@@ -58,7 +56,7 @@ class PairMasks(NamedTuple):
 
 class Estimators(NamedTuple):
     difference_vectors: dict[str, torch.Tensor]
-    fold_mean_vectors: dict[str, torch.Tensor]
+    fold_vectors: dict[str, torch.Tensor]
 
 
 def _load_activation_matrix(
@@ -115,6 +113,24 @@ def _load_supervised_pair_masks(
     return pair_masks
 
 
+def _make_fold_ids_by_split(
+    pair: SupervisedPair,
+    num_supervised_pairs: int,
+    experiment_config: ExperimentConfig,
+    processed_data_dir: Path,
+) -> dict[SplitSuffixes, torch.Tensor]:
+    num_testing_pairs = len(load_json(
+        processed_data_dir / f'{pair.corpus_name}{SplitSuffixes.PAIR_METADATA}{SplitSuffixes.TESTING}.json',
+    )[:experiment_config.debug_max_split_lines])
+    fold_ids_by_split = {
+        SplitSuffixes.SUPERVISED: stats_utils.make_fold_ids(
+            num_supervised_pairs, experiment_config.num_cv_folds, experiment_config.random_seed,
+        ),
+        SplitSuffixes.TESTING: torch.zeros(num_testing_pairs, dtype=torch.long),
+    }
+    return fold_ids_by_split
+
+
 def _get_split_lists(
     corpus_config: dict[str, DatasetConfig],
 ) -> SplitLists:
@@ -144,16 +160,19 @@ def _get_split_lists(
 
 
 def _save_estimators(
-    estimators: dict[str, torch.Tensor],
-    layer: int,
-    pooling_type: PoolingType,
-    out_dir: Path,
+    estimators: Estimators,
+    sweep_identifier: str,
+    run_dirs: RunDirs,
 ) -> None:
-    sweep_identifier = get_sweep_identifier(layer, pooling_type, 1)
-    for estimator_name, estimator_matrix in estimators.items():
+    for name, difference_vector in estimators.difference_vectors.items():
         torch.save(
-            estimator_matrix,
-            get_sweep_tensor_filepath(out_dir, sweep_identifier, estimator_name),
+            difference_vector.cpu(),
+            get_sweep_tensor_filepath(run_dirs.difference_vectors, sweep_identifier, name),
+        )
+    for name, fold_vectors in estimators.fold_vectors.items():
+        torch.save(
+            fold_vectors.cpu(),
+            get_sweep_tensor_filepath(run_dirs.fold_vectors, sweep_identifier, name),
         )
 
 
@@ -212,10 +231,10 @@ def _compute_and_save_h1_tensors(
         math_utils.compute_matched_covariance_matrix(centered_pooled_activations_matrix, max_rank)
         for _ in range(experiment_config.num_null_draws)
     ]
-    torch.save(torch.stack(null_tensors), out_dir / f'{H1_NULL_PREFIX}{sweep_identifier}.pt')
+    torch.save(torch.stack(null_tensors).cpu(), out_dir / f'{H1_NULL_PREFIX}{sweep_identifier}.pt')
 
     for corpus_name, tensors in svd_tensors.items():
-        torch.save(torch.stack(tensors), out_dir / f'{H1_SVD_PREFIX}{corpus_name}_{sweep_identifier}.pt')
+        torch.save(torch.stack(tensors).cpu(), out_dir / f'{H1_SVD_PREFIX}{corpus_name}_{sweep_identifier}.pt')
 
     save_json(floors, out_dir, f'{H1_FLOORS_PREFIX}{sweep_identifier}')
 
@@ -251,23 +270,11 @@ def _compute_difference_matrices(
     return difference_matrices
 
 
-def _save_q1_folds(
-    fold_ids_dict: dict[str, torch.Tensor],
-    mean_vector_folds_dict: dict[str, torch.Tensor],
-    sweep_identifier: str,
-    out_dir: Path,
-) -> None:
-    for corpus_name, fold_ids in fold_ids_dict.items():
-        torch.save(fold_ids, out_dir / f'{Q1_FOLD_IDS_PREFIX}{corpus_name}.pt')
-    for name, folds in mean_vector_folds_dict.items():
-        torch.save(folds, out_dir / f'{name}_{sweep_identifier}.pt')
-
-
 def _compute_estimators(
     split_lists: SplitLists,
     activations: dict[str, torch.Tensor],
     supervised_pair_masks_dict: dict[str, PairMasks],
-    fold_ids_dict: dict[str, torch.Tensor],
+    fold_ids_dict: dict[str, dict[SplitSuffixes, torch.Tensor]],
     layer: int,
     pooling_type: PoolingType,
     experiment_config: ExperimentConfig,
@@ -275,7 +282,7 @@ def _compute_estimators(
 ) -> Estimators:
     sweep_identifier = get_sweep_identifier(layer, pooling_type)
     difference_vectors = {}
-    fold_mean_vectors = {}
+    fold_vectors = {}
 
     for pair in split_lists.supervised_pairs:
         aae_back_activation_matrix = None
@@ -286,15 +293,16 @@ def _compute_estimators(
             pair, activations, supervised_pair_masks_dict[pair.corpus_name], aae_back_activation_matrix,
         )
         for vector, difference_matrix in difference_matrices.items():
-            difference_vectors[f'{DIFFERENCE_VECTOR_PREFIX}{pair.corpus_name}{vector}'] = math_utils.compute_mean_vector(difference_matrix)
-            fold_mean_vectors[f'{Q1_FOLD_MEAN_VECTORS_PREFIX}{pair.corpus_name}{vector}'] = stats_utils.compute_fold_excluded_mean_vectors(
-                difference_matrix,
-                fold_ids_dict[pair.corpus_name],
+            name = f'{pair.corpus_name}{vector}'
+            difference_vectors[name] = math_utils.compute_mean_vector(difference_matrix)
+            fold_vectors[f'{name}{SplitSuffixes.SUPERVISED}'] = stats_utils.compute_fold_excluded_mean_vectors(
+                difference_matrix, fold_ids_dict[pair.corpus_name][SplitSuffixes.SUPERVISED],
             )
+            fold_vectors[f'{name}{SplitSuffixes.TESTING}'] = difference_vectors[name]
 
     estimators = Estimators(
         difference_vectors=difference_vectors,
-        fold_mean_vectors=fold_mean_vectors,
+        fold_vectors=fold_vectors,
     )
     return estimators
 
@@ -317,9 +325,18 @@ def compute_and_save_estimators(
         for pair in split_lists.supervised_pairs
     }
     fold_ids_dict = {
-        corpus_name: stats_utils.make_fold_ids(len(pair_masks.aae_back_valid), experiment_config.num_cv_folds, experiment_config.random_seed)
-        for corpus_name, pair_masks in supervised_pair_masks_dict.items()
+        pair.corpus_name: _make_fold_ids_by_split(
+            pair=pair,
+            num_supervised_pairs=len(supervised_pair_masks_dict[pair.corpus_name].aae_back_valid),
+            experiment_config=experiment_config,
+            processed_data_dir=processed_data_dir,
+        )
+        for pair in split_lists.supervised_pairs
     }
+    for corpus_name, fold_ids_by_split in fold_ids_dict.items():
+        for split_suffix, fold_ids in fold_ids_by_split.items():
+            torch.save(fold_ids, run_dirs.fold_vectors / f'{FOLD_IDS_PREFIX}{corpus_name}{split_suffix}.pt')
+
     for layer, pooling_type in tqdm(sweep_tuples, desc='Computing Estimators', leave=True):
         sweep_identifier = get_sweep_identifier(layer, pooling_type)
         split_names = (
@@ -336,8 +353,7 @@ def compute_and_save_estimators(
             _compute_and_save_h1_tensors(activations, sweep_identifier, max_rank, experiment_config, run_dirs.h1_estimators)
 
         estimators = _compute_estimators(split_lists, activations, supervised_pair_masks_dict, fold_ids_dict, layer, pooling_type, experiment_config, run_dirs)
-        _save_estimators(estimators.difference_vectors, layer, pooling_type, run_dirs.steering_estimators)
-        _save_q1_folds(fold_ids_dict, estimators.fold_mean_vectors, sweep_identifier, run_dirs.q1_estimators)
+        _save_estimators(estimators, sweep_identifier, run_dirs)
 
         del activations, estimators
 

@@ -85,7 +85,7 @@ def _compute_edit_data_by_threshold(
     experiment_config: ExperimentConfig,
 ) -> dict[str, PairEditData]:
     edit_data_by_threshold = {
-        threshold_name: text_utils.compute_pair_edit_data(aae_text, sae_text, threshold, experiment_config.q4_function_words)
+        threshold_name: edit_tagger.compute_pair_edit_data(aae_text, sae_text, threshold, experiment_config.q4_function_words)
         for threshold_name, threshold in experiment_config.q4_orthographic_thresholds._asdict().items()
     }
     return edit_data_by_threshold
@@ -100,7 +100,7 @@ def _annotate_text_pair(
     text_pair_annotations = TextPairAnnotations(
         edit_data_by_threshold=_compute_edit_data_by_threshold(aae_text, sae_text, experiment_config),
         edits=edit_tagger.compute_pair_edits(aae_text, sae_text, tagger_inputs),
-        controls=text_utils.compute_pair_controls(aae_text, sae_text, tagger_inputs.profanities),
+        controls=edit_tagger.compute_pair_controls(aae_text, sae_text, tagger_inputs.profanities),
         num_aae_features=sum(
             bool(pattern.search(aae_text))
             for pattern in text_rules.AAE_FEATURE_PATTERNS.values()

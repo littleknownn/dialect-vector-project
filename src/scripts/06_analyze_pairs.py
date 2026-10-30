@@ -1,3 +1,4 @@
+import argparse
 from pathlib import Path
 from typing import NamedTuple
 
@@ -19,10 +20,13 @@ from src.core.config_utils import (
     SupervisedPair,
     get_estimator_data,
 )
+from src.core.data_provenance import (
+    save_freeze_record,
+    verify_run_setup,
+)
 from src.core.paths import (
+    FOLD_IDS_PREFIX,
     PROCESSED_DATA_DIR,
-    Q1_FOLD_IDS_PREFIX,
-    Q1_FOLD_MEAN_VECTORS_PREFIX,
     Q1_PROJECTIONS_PREFIX,
     Q1_RESULTS_PREFIX,
     Q3_RESULTS_PREFIX,
@@ -32,7 +36,6 @@ from src.core.paths import (
     get_run_dirs,
     get_sweep_identifier,
     get_sweep_tensor_filepath,
-    verify_extraction_log,
 )
 import src.core.edit_regression as edit_regression
 import src.core.stats_utils as stats_utils
@@ -53,6 +56,7 @@ from src.core.utils import (
     Q4EditVerdict,
     Q4Results,
     Q4Stratum,
+    RunMode,
     SeedOffset,
     SplitSuffixes,
     TextPairAnnotations,
@@ -117,24 +121,6 @@ def _save_pair_edit_data(
 
 
 ### Q1 ###
-def _load_fold_estimates(
-    pair: SupervisedPair,
-    vector: DifferenceVector,
-    sweep_identifier: str,
-    run_dirs: RunDirs,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    fold_ids = torch.load(
-        run_dirs.q1_estimators / f'{Q1_FOLD_IDS_PREFIX}{pair.corpus_name}.pt',
-        weights_only=True,
-    )
-    mean_vector_folds = torch.load(
-        run_dirs.q1_estimators / f'{Q1_FOLD_MEAN_VECTORS_PREFIX}{pair.corpus_name}{vector}_{sweep_identifier}.pt',
-        weights_only=True,
-        map_location='cpu', #
-    )
-    return fold_ids, mean_vector_folds
-
-
 def _load_q1_inputs_dict(
     pair: SupervisedPair,
     split_suffix: SplitSuffixes,
@@ -146,6 +132,10 @@ def _load_q1_inputs_dict(
     processed_data_dir: Path,
 ) -> dict[DifferenceVector, Q1Inputs]:
     sweep_identifier = get_sweep_identifier(layer, pooling_type)
+    fold_ids = torch.load(
+        run_dirs.fold_vectors / f'{FOLD_IDS_PREFIX}{pair.corpus_name}{split_suffix}.pt',
+        weights_only=True,
+    )
     load_activation_matrix_fn = lambda dialect_suffix: torch.load(
         get_sweep_tensor_filepath(
             run_dirs.activations,
@@ -171,8 +161,13 @@ def _load_q1_inputs_dict(
     
     q1_inputs_dict = {}
     for vector in vectors:
-        fold_ids, mean_vector_folds = _load_fold_estimates(
-            pair, vector, sweep_identifier, split_suffix, len(aae_activation_matrix), run_dirs,
+        mean_vector_folds = torch.load(
+            get_sweep_tensor_filepath(
+                run_dirs.fold_vectors,
+                sweep_identifier,
+                f'{pair.corpus_name}{vector}{split_suffix}',
+            ),
+            weights_only=True,
         )
         minuend_activation_matrix = (
             aae_back_activation_matrix
@@ -854,8 +849,15 @@ def compute_and_save_metrics(
 
 
 if __name__ == '__main__':
+    argument_parser = argparse.ArgumentParser()
+    argument_parser.add_argument(
+        '--mode', type=RunMode, choices=list(RunMode), default=RunMode.DEVELOPMENT,
+    )
+    run_mode = argument_parser.parse_args().mode
     tqdm.write('Loading Data...')
     run_dirs = get_run_dirs(EXPERIMENT_CONFIG)
-    verify_extraction_log(EXPERIMENT_CONFIG, run_dirs)
-    compute_and_save_metrics(CORPUS_CONFIG, SplitSuffixes.SUPERVISED, EXPERIMENT_CONFIG, run_dirs)
+    verify_run_setup(EXPERIMENT_CONFIG, run_dirs, run_mode)
+    compute_and_save_metrics(CORPUS_CONFIG, run_mode.split_suffix, EXPERIMENT_CONFIG, run_dirs)
+    if run_mode == RunMode.FREEZE:
+        save_freeze_record(EXPERIMENT_CONFIG, run_dirs)
     tqdm.write('06: Pair Metrics Computation Complete\n')

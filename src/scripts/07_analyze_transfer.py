@@ -15,9 +15,9 @@ from src.core.config_utils import (
     SupervisedPair,
     get_estimator_data,
 )
+from src.core.data_provenance import verify_extraction_log
 import src.core.math_utils as math_utils
 from src.core.paths import (
-    DIFFERENCE_VECTOR_PREFIX,
     H1_FLOORS_PREFIX,
     H1_NULL_PREFIX,
     H1_RESULTS_FILENAME,
@@ -26,7 +26,6 @@ from src.core.paths import (
     get_run_dirs,
     get_sweep_identifier,
     get_sweep_tensor_filepath,
-    verify_extraction_log,
 )
 from src.core.utils import (
     DifferenceVector,
@@ -74,16 +73,16 @@ def _compute_h1_results(
     h1_data: H1Data,
     pooling_type: PoolingType,
     experiment_config:  ExperimentConfig,
-    steering_estimators_dir: Path,
-    supervised_corpus_name: str,
+    difference_vectors_dir: Path,
+    paired_corpus_name: str,
     estimator_rank: int,
 ) -> H1Results:
-    sweep_identifier = get_sweep_identifier(experiment_config.primary_layer, pooling_type, 1)
+    sweep_identifier = get_sweep_identifier(experiment_config.primary_layer, pooling_type)
     difference_vector = torch.load(
         get_sweep_tensor_filepath(
-            steering_estimators_dir,
+            difference_vectors_dir,
             sweep_identifier,
-            f'{DIFFERENCE_VECTOR_PREFIX}{supervised_corpus_name}{DifferenceVector.OFFSET}',
+            f'{paired_corpus_name}{DifferenceVector.OFFSET}',
         ),
         weights_only=True,
     )
@@ -139,7 +138,7 @@ def _compute_and_save_h1_results(
 ) -> None:
     max_rank = max(experiment_config.target_ranks)
     data = _load_h1_data(pooling_type, experiment_config, run_dirs.h1_estimators)
-    results = _compute_h1_results(data, pooling_type, experiment_config, run_dirs.steering_estimators, pair.corpus_name, max_rank)
+    results = _compute_h1_results(data, pooling_type, experiment_config, run_dirs.difference_vectors, pair.corpus_name, max_rank)
     sweep_identifier = get_sweep_identifier(experiment_config.primary_layer, pooling_type, max_rank)
     filename = f'{h1_results_filename}_{pair.corpus_name}_{sweep_identifier}'
     save_json(results, run_dirs.transfer_results, filename)
