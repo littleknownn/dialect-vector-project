@@ -15,6 +15,7 @@ from src.core.utils import (
 
 LOGGED_EXPERIMENT_CONFIG_FIELDS = (
     'model_hf_path',
+    'attn_implementation',
     'load_in_4bit',
     'bnb_4bit_quant_type',
     'target_layers',
@@ -23,6 +24,12 @@ LOGGED_EXPERIMENT_CONFIG_FIELDS = (
     'batch_size',
     'max_seq_len',
 )
+
+
+class ModelSpec(NamedTuple):
+    model_hf_path: str
+    primary_layer: int
+    attn_implementation: str | None = None
 
 
 class Q1Thresholds(NamedTuple):
@@ -51,6 +58,7 @@ class Q4OrthographicThresholds(NamedTuple):
 @dataclass
 class ExperimentConfig:
     model_hf_path: str
+    attn_implementation: str | None
     load_in_4bit: bool
     bnb_4bit_quant_type: str
 
@@ -83,6 +91,7 @@ class ExperimentConfig:
     q4_orthographic_thresholds: Q4OrthographicThresholds
     q4_respelling_threshold: float
     q4_single_letter_respelling_threshold: float
+    q4_aint_words: tuple[str, ...]
     q4_function_words: tuple[str, ...]
     q4_grammar_words: tuple[str, ...]
     q4_copula_words: tuple[str, ...]
@@ -91,6 +100,9 @@ class ExperimentConfig:
     q4_num_held_out_folds: int
     q4_num_calibration_bins: int
     q4_num_bootstrap_samples: int
+    q4_min_edits_for_verdict: int
+    q4_num_robustness_bootstrap_samples: int
+    q4_robustness_distance_shift: int
     q4_marginal_effect_distances: tuple[int, ...]
     
     corpus_split_size: int
@@ -178,6 +190,11 @@ class SupervisedPair(NamedTuple):
     corpus_name: str
     aae_split: str
     sae_split: str
+
+
+class ModelConfigs(NamedTuple):
+    corpus_config: dict[str, DatasetConfig]
+    experiment_config: ExperimentConfig
 
 
 class EstimatorData(NamedTuple):

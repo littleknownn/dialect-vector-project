@@ -1,3 +1,4 @@
+import argparse
 from pathlib import Path
 
 import inflect
@@ -5,7 +6,10 @@ from tqdm import tqdm
 from transformers import PreTrainedTokenizerBase
 
 from src.core.base_model import load_tokenizer
-from src.core.config import EXPERIMENT_CONFIG
+from src.core.config import (
+    add_model_argument,
+    get_model_configs,
+)
 from src.core.config_utils import ExperimentConfig
 import src.core.edit_tagger as edit_tagger
 from src.core.paths import (
@@ -161,6 +165,7 @@ def annotate_and_save_pairs(
         profanities=_load_profanities(profanity_list_filepath),
         respelling_threshold=experiment_config.q4_respelling_threshold,
         single_letter_respelling_threshold=experiment_config.q4_single_letter_respelling_threshold,
+        aint_words=frozenset(experiment_config.q4_aint_words)
     )
     for metadata_filepath in sorted(in_dir.glob(f'*{SplitSuffixes.PAIR_METADATA}*.json')):
         corpus_name, split_suffix = metadata_filepath.stem.split(SplitSuffixes.PAIR_METADATA)
@@ -176,8 +181,12 @@ def annotate_and_save_pairs(
 
 
 if __name__ == '__main__':
-    run_dirs = get_run_dirs(EXPERIMENT_CONFIG)
-    tokenizer = load_tokenizer(EXPERIMENT_CONFIG)
-    annotate_and_save_lines(tokenizer, EXPERIMENT_CONFIG, run_dirs.text_annotations)
-    annotate_and_save_pairs(EXPERIMENT_CONFIG, run_dirs.text_annotations)
+    argument_parser = argparse.ArgumentParser()
+    add_model_argument(argument_parser)
+    corpus_config, experiment_config = get_model_configs(argument_parser.parse_args().model)
+    run_dirs = get_run_dirs(experiment_config)
+    
+    tokenizer = load_tokenizer(experiment_config)
+    annotate_and_save_lines(tokenizer, experiment_config, run_dirs.text_annotations)
+    annotate_and_save_pairs(experiment_config, run_dirs.text_annotations)
     tqdm.write('02: Text Annotation Complete')

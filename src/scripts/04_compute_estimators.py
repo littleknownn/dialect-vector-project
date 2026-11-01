@@ -1,3 +1,4 @@
+import argparse
 import itertools
 from pathlib import Path
 from typing import NamedTuple
@@ -6,8 +7,8 @@ import torch
 from tqdm import tqdm
 
 from src.core.config import (
-    CORPUS_CONFIG,
-    EXPERIMENT_CONFIG,
+    add_model_argument,
+    get_model_configs,
 )
 from src.core.config_utils import (
     BaselineDatasetConfig,
@@ -229,7 +230,7 @@ def _compute_and_save_h1_tensors(
 
     null_tensors = [
         math_utils.compute_matched_covariance_matrix(centered_pooled_activations_matrix, max_rank)
-        for _ in range(experiment_config.num_null_draws)
+        for _ in tqdm(range(experiment_config.num_null_draws), desc='H1 Nulls', leave=False)
     ]
     torch.save(torch.stack(null_tensors).cpu(), out_dir / f'{H1_NULL_PREFIX}{sweep_identifier}.pt')
 
@@ -252,7 +253,7 @@ def _compute_difference_matrices(
     )
     difference_matrix = activations[pair.aae_split] - activations[pair.sae_split]
     difference_matrices = {
-        DifferenceVector.OFFSET: difference_matrix
+        DifferenceVector.DIALECT: difference_matrix
     }
     difference_matrices |= {
         vector: mask_rows_fn(difference_matrix, mask)
@@ -263,7 +264,7 @@ def _compute_difference_matrices(
             activations[pair.aae_split] - aae_back_activation_matrix,
             pair_masks.aae_back_valid,
         )
-        difference_matrices[DifferenceVector.DIALECT] = mask_rows_fn(
+        difference_matrices[DifferenceVector.DIALECT_GEMINI] = mask_rows_fn(
             aae_back_activation_matrix - activations[pair.sae_split],
             pair_masks.aae_back_valid,
         )
@@ -337,8 +338,10 @@ def compute_and_save_estimators(
         for split_suffix, fold_ids in fold_ids_by_split.items():
             torch.save(fold_ids, run_dirs.fold_vectors / f'{FOLD_IDS_PREFIX}{corpus_name}{split_suffix}.pt')
 
-    for layer, pooling_type in tqdm(sweep_tuples, desc='Computing Estimators', leave=True):
+    sweep_bar = tqdm(sweep_tuples, desc='04 Computing Estimators', leave=True)
+    for layer, pooling_type in sweep_bar:
         sweep_identifier = get_sweep_identifier(layer, pooling_type)
+        sweep_bar.set_postfix(sweep_identifier)
         split_names = (
             split_lists.supervised_split_names
             if pooling_type.is_paired_only
@@ -359,7 +362,11 @@ def compute_and_save_estimators(
 
 
 if __name__ == '__main__':
-    run_dirs = get_run_dirs(EXPERIMENT_CONFIG)
-    verify_extraction_log(EXPERIMENT_CONFIG, run_dirs)
-    compute_and_save_estimators(CORPUS_CONFIG, EXPERIMENT_CONFIG, run_dirs)
+    argument_parser = argparse.ArgumentParser()
+    add_model_argument(argument_parser)
+    corpus_config, experiment_config = get_model_configs(argument_parser.parse_args().model)
+    run_dirs = get_run_dirs(experiment_config)
+    
+    verify_extraction_log(experiment_config, run_dirs)
+    compute_and_save_estimators(corpus_config, experiment_config, run_dirs)
     tqdm.write('04: Estimator Computation Complete\n')

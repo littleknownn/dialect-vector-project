@@ -31,9 +31,10 @@ def load_tokenizer(experiment_config: ExperimentConfig) -> PreTrainedTokenizerBa
 def load_base_model_and_tokenizer(experiment_config: ExperimentConfig) -> tuple[PreTrainedModel, PreTrainedTokenizerBase]:
     model = AutoModelForCausalLM.from_pretrained(
         experiment_config.model_hf_path,
-        quantization_config = get_quantization_config(experiment_config),
-        dtype = 'auto',
-        device_map = 'auto',
+        quantization_config=get_quantization_config(experiment_config),
+        dtype='auto',
+        device_map='auto',
+        attn_implementation=experiment_config.attn_implementation,
     )
     tokenizer = load_tokenizer(experiment_config)
     return model, tokenizer

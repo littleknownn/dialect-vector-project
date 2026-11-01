@@ -4,24 +4,41 @@ import json
 from pathlib import Path
 from typing import Any
 
+from src.core.config import MODEL_SPECS
 from src.core.config_utils import (
     LOGGED_EXPERIMENT_CONFIG_FIELDS,
     ExperimentConfig,
+    ModelSpec,
 )
 from src.core.paths import (
     CORE_DIR,
     EXTRACTION_LOG_FILENAME,
     FREEZE_RECORD_FILENAME,
     PROCESSED_DATA_DIR,
+    PROFANITY_LIST_FILENAME,
+    RAW_DATA_DIR,
     SCRIPTS_DIR,
     RunDirs,
 )
 from src.core.utils import (
     FreezeRecord,
+    FrozenInputHashes,
+    ModelName,
     RunMode,
     load_json,
     save_json,
 )
+
+
+def compute_tree_hashes(
+    in_dir: Path,
+) -> dict[str, str]:
+    tree_hashes = {
+        str(path.relative_to(in_dir)): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in sorted(in_dir.rglob('*'))
+        if path.is_file()
+    }
+    return tree_hashes
 
 
 def compute_file_hashes(
@@ -33,6 +50,18 @@ def compute_file_hashes(
         if path.is_file()
     }
     return file_hashes
+
+
+def _compute_frozen_input_hashes(
+    run_dirs: RunDirs,
+    profanity_list_filepath: Path,
+) -> FrozenInputHashes:
+    frozen_input_hashes = FrozenInputHashes(
+        text_annotations=compute_file_hashes(run_dirs.text_annotations),
+        estimators=compute_tree_hashes(run_dirs.difference_vectors) | compute_tree_hashes(run_dirs.fold_vectors),
+        profanity_list=hashlib.sha256(profanity_list_filepath.read_bytes()).hexdigest(),
+    )
+    return frozen_input_hashes
 
 
 def serialize_config(
@@ -84,13 +113,26 @@ def verify_extraction_log(
         raise ValueError(f'Stored activations do not match the current setup: {mismatches}')
 
 
+def _serialize_model_specs(
+    model_specs: dict[ModelName, ModelSpec],
+) -> dict[str, dict[str, Any]]:
+    serialized_model_specs = {
+        model_name: model_spec._asdict()
+        for model_name, model_spec in model_specs.items()
+    }
+    return serialized_model_specs
+
+
 def save_freeze_record(
     experiment_config: ExperimentConfig,
     run_dirs: RunDirs,
     processed_data_dir: Path = PROCESSED_DATA_DIR,
     core_dir: Path = CORE_DIR,
     scripts_dir: Path = SCRIPTS_DIR,
+    raw_data_dir: Path = RAW_DATA_DIR,
     freeze_record_filename: str = FREEZE_RECORD_FILENAME,
+    profanity_list_filename: str = PROFANITY_LIST_FILENAME,
+    model_specs: dict[ModelName, ModelSpec] = MODEL_SPECS,
 ) -> None:
     freeze_record_filepath = run_dirs.pair_results / f'{freeze_record_filename}.json'
     if freeze_record_filepath.exists():
@@ -99,6 +141,10 @@ def save_freeze_record(
         source_code_hashes=compute_file_hashes(core_dir) | compute_file_hashes(scripts_dir),
         experiment_config=serialize_config(experiment_config),
         processed_data_hashes=compute_file_hashes(processed_data_dir),
+        frozen_input_hashes=_compute_frozen_input_hashes(
+            run_dirs, raw_data_dir / f'{profanity_list_filename}.txt',
+        )._asdict(),
+        declared_model_specs=_serialize_model_specs(model_specs)
     )
     save_json(freeze_record, run_dirs.pair_results, freeze_record_filename)
 
@@ -107,11 +153,15 @@ def verify_freeze_record(
     experiment_config: ExperimentConfig,
     run_dirs: RunDirs,
     processed_data_dir: Path = PROCESSED_DATA_DIR,
+    raw_data_dir: Path = RAW_DATA_DIR,
     freeze_record_filename: str = FREEZE_RECORD_FILENAME,
+    profanity_list_filename: str = PROFANITY_LIST_FILENAME,
+    model_specs: dict[ModelName, ModelSpec] = MODEL_SPECS,
 ) -> None:
     freeze_record_filepath = run_dirs.pair_results / f'{freeze_record_filename}.json'
     if not freeze_record_filepath.exists():
         raise FileNotFoundError(f"Testing mode requires freeze record: {freeze_record_filepath}")
+
     freeze_record = load_json(freeze_record_filepath)
     mismatches = _find_setup_mismatches(
         freeze_record['experiment_config'],
@@ -120,6 +170,17 @@ def verify_freeze_record(
         tuple(freeze_record['experiment_config']),
         processed_data_dir,
     )
+
+    recorded_input_hashes = FrozenInputHashes(**freeze_record['frozen_input_hashes'])
+    current_input_hashes = _compute_frozen_input_hashes(run_dirs, raw_data_dir / f'{profanity_list_filename}.txt')
+    mismatches += [
+        f'frozen input: {name}'
+        for name, recorded_hashes, current_hashes
+        in zip(FrozenInputHashes._fields, recorded_input_hashes, current_input_hashes)
+        if recorded_hashes != current_hashes
+    ]
+    if freeze_record['declared_model_specs'] != _serialize_model_specs(model_specs):
+        mismatches.append('declared model specs')
     if mismatches:
         raise ValueError(f'Setup cannot change after freeze: {mismatches}')
 

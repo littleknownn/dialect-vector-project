@@ -2,7 +2,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import NamedTuple
 
-import numpy as np
+import torch
 from tqdm import tqdm
 from scipy.stats import false_discovery_control
 
@@ -92,13 +92,13 @@ def _compute_behavioral_results(
         pos_points = [p for p in curve_points if p.alpha >= 0.0]
         neg_points = [p for p in curve_points if p.alpha <= 0.0]
 
-        auc_pos_results[sweep_key] = float(np.trapz(
-            y=[point.value for point in pos_points],
-            x=[point.alpha for point in pos_points],
+        auc_pos_results[sweep_key] = float(torch.trapezoid(
+            torch.tensor([point.value for point in pos_points]),
+            torch.tensor([point.alpha for point in pos_points]),
         ))
-        auc_neg_results[sweep_key] = -float(np.trapz(
-            y=[point.value for point in neg_points],
-            x=[point.alpha for point in neg_points],
+        auc_neg_results[sweep_key] = -float(torch.trapezoid(
+            torch.tensor([point.value for point in neg_points]),
+            torch.tensor([point.alpha for point in neg_points]),
         ))
 
         if sweep_key.metric == MetricType.LLR_SHIFT:

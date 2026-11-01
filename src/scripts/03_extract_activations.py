@@ -1,6 +1,8 @@
+import argparse
 from collections import defaultdict
 import gc
 import itertools
+import math
 from pathlib import Path
 from typing import NamedTuple
 
@@ -14,8 +16,8 @@ from transformers import (
 
 from src.core.base_model import load_base_model_and_tokenizer
 from src.core.config import (
-    CORPUS_CONFIG,
-    EXPERIMENT_CONFIG,
+    add_model_argument,
+    get_model_configs,
 )
 from src.core.config_utils import (
     DatasetConfig,
@@ -69,7 +71,8 @@ def _extract_activations(
         else itertools.repeat(None)
     )
     batches = itertools.batched(zip(lines, line_boundary_char_indices), experiment_config.batch_size)
-    for batch in tqdm(batches, desc='Extracting Activations'):
+    num_batches = math.ceil(len(lines) / experiment_config.batch_size)
+    for batch in tqdm(batches, desc='batches', total=num_batches, leave=False):
         batch_lines, batch_boundary_char_indices = zip(*batch)
         tokens = tokenizer(
             list(batch_lines),
@@ -220,14 +223,22 @@ def extract_and_save_activations(
     boundary_char_indices_by_split = _load_boundary_char_indices_by_split(in_dir)
     num_lines_by_split = {}
     num_truncated_lines_by_split = {}
-    for corpus_path in sorted(in_dir.glob('*.jsonl')):
+    
+    corpus_paths = sorted(in_dir.glob('*.jsonl'))
+    split_bar = tqdm(corpus_paths, desc='03 Extracting Activations')
+    for corpus_path in split_bar:
         split_name = corpus_path.stem
+        if get_dataset_config(split_name, corpus_config) is None:
+            continue
+        split_bar.set_postfix(sweep_identifier)
         target_layers = _get_split_target_layers(split_name, experiment_config)
         tqdm.write(f'Loading {split_name} Corpus...')
+        
         lines = load_jsonl(corpus_path)[:experiment_config.debug_max_split_lines]
         num_lines_by_split[split_name] = len(lines)
         num_truncated_lines_by_split[split_name] = _compute_num_truncated_lines(tokenizer, lines, experiment_config.max_seq_len)
         is_unpaired = not isinstance(get_dataset_config(split_name, corpus_config), SupervisedDatasetConfig)
+        
         activations = _extract_activations(
             model,
             tokenizer,
@@ -270,7 +281,11 @@ def extract_and_save_activations(
 
 
 if __name__ == '__main__':
-    run_dirs = get_run_dirs(EXPERIMENT_CONFIG)
-    model, tokenizer = load_base_model_and_tokenizer(EXPERIMENT_CONFIG)
-    extract_and_save_activations(model, tokenizer, CORPUS_CONFIG, EXPERIMENT_CONFIG, run_dirs=run_dirs)
+    argument_parser = argparse.ArgumentParser()
+    add_model_argument(argument_parser)
+    corpus_config, experiment_config = get_model_configs(argument_parser.parse_args().model)
+    run_dirs = get_run_dirs(experiment_config)
+
+    model, tokenizer = load_base_model_and_tokenizer(experiment_config)
+    extract_and_save_activations(model, tokenizer, corpus_config, experiment_config, run_dirs)
     tqdm.write('03: Activation Extraction Complete\n')

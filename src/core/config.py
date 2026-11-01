@@ -1,3 +1,6 @@
+import argparse
+import dataclasses
+
 from src.core.paths import RAW_DATA_DIR
 import src.core.text_rules as text_rules
 from src.core.config_utils import (
@@ -7,6 +10,8 @@ from src.core.config_utils import (
     ExperimentConfig,
     GithubSourceConfig,
     HFSourceConfig,
+    ModelConfigs,
+    ModelSpec,
     Q1LabeledThresholds,
     Q1Thresholds,
     Q4OrthographicThresholds,
@@ -16,6 +21,7 @@ from src.core.config_utils import (
 )
 from src.core.utils import (
     DifferenceVector,
+    ModelName,
     PoolingType,
     Q3EditCount,
     Q4CurveFunction,
@@ -23,8 +29,28 @@ from src.core.utils import (
 )
 
 
+PRIMARY_MODEL_NAME: ModelName = ModelName.LLAMA_3B
+MODEL_SPECS: dict[ModelName, ModelSpec] = {
+    ModelName.LLAMA_3B: ModelSpec(
+        'meta-llama/Llama-3.2-3B', primary_layer=14,
+    ),
+    ModelName.LLAMA_8B: ModelSpec(
+        'meta-llama/Llama-3.1-8B', primary_layer=16,
+    ),
+    ModelName.OLMO_7B: ModelSpec(
+        'allenai/Olmo-3-1025-7B', primary_layer=16,
+    ),
+    ModelName.GEMMA_2B: ModelSpec(
+        'google/gemma-2-2b', primary_layer=13, attn_implementation='eager',
+    ),
+}
+REPLICATION_CORPUS_NAMES: tuple[str, ...] = ('real_aae')
+
+
 EXPERIMENT_CONFIG = ExperimentConfig(
-    model_hf_path='meta-llama/Llama-3.2-3B',
+    model_hf_path=MODEL_SPECS[PRIMARY_MODEL_NAME].model_hf_path,
+    attn_implementation=MODEL_SPECS[PRIMARY_MODEL_NAME].attn_implementation,
+    
     load_in_4bit=False,
     bnb_4bit_quant_type='nf4',
 
@@ -34,7 +60,7 @@ EXPERIMENT_CONFIG = ExperimentConfig(
         -1.0, -0.75, -0.5, -0.25, 0.0, 0.25, 0.5, 0.75, 1.0,
     ],
 
-    primary_layer=14,
+    primary_layer=MODEL_SPECS[PRIMARY_MODEL_NAME].primary_layer,
     primary_pooling_type=PoolingType.BOUNDARY,
     
     debug_max_split_lines=None,
@@ -63,8 +89,8 @@ EXPERIMENT_CONFIG = ExperimentConfig(
             standardized_mean_ci_lower=0.5,
         ),
     ),
-    q1_fdr_vectors=(DifferenceVector.OFFSET, DifferenceVector.AUTHORSHIP, DifferenceVector.DIALECT),
-    q1_layer_sweep_vectors=(DifferenceVector.OFFSET,),
+    q1_fdr_vectors=(DifferenceVector.DIALECT, DifferenceVector.AUTHORSHIP, DifferenceVector.DIALECT_GEMINI),
+    q1_layer_sweep_vectors=(DifferenceVector.DIALECT,),
     q1_num_sign_flips=10_000,
     q1_num_shuffled_pairings=1_000,
 
@@ -101,6 +127,9 @@ EXPERIMENT_CONFIG = ExperimentConfig(
     ),
     q4_respelling_threshold=0.6,
     q4_single_letter_respelling_threshold=0.7,
+    q4_aint_words=tuple("""
+        aint ain't
+    """.split()),
     q4_function_words=tuple('''
         the a an is are was were be been am do does did has have had to of in on at
         for and but that it they he she we you i not no with it's that's what who this
@@ -127,6 +156,9 @@ EXPERIMENT_CONFIG = ExperimentConfig(
     q4_num_held_out_folds=5,
     q4_num_calibration_bins=10,
     q4_num_bootstrap_samples=2_000,
+    q4_min_edits_for_verdict=30,
+    q4_num_robustness_bootstrap_samples=300,
+    q4_robustness_distance_shift=1,
     q4_marginal_effect_distances=(1, 3),
     
     corpus_split_size=3_782,
@@ -323,3 +355,43 @@ CORPUS_CONFIG = {
         ],
     ),
 }
+
+
+def get_model_configs(
+    model_name: ModelName,
+    corpus_config: dict[str, DatasetConfig] = CORPUS_CONFIG, #
+    experiment_config: ExperimentConfig = EXPERIMENT_CONFIG, #
+    model_specs: dict[ModelName, ModelSpec] = MODEL_SPECS,
+    primary_model_name: ModelName = PRIMARY_MODEL_NAME,
+    replication_corpus_names: tuple[str, ...] = REPLICATION_CORPUS_NAMES,
+) -> ModelConfigs:
+    if model_name == primary_model_name:
+        return ModelConfigs(corpus_config, experiment_config)
+    model_spec = model_specs[model_name]
+    replication_corpus_config = {
+        corpus_name: corpus_config[corpus_name]
+        for corpus_name in replication_corpus_names
+    }
+    replication_experiment_config = dataclasses.replace(
+        experiment_config,
+        model_hf_path=model_spec.model_hf_path,
+        attn_implementation=model_spec.attn_implementation,
+        target_layers=[model_spec.primary_layer],
+        primary_layer=model_spec.primary_layer,
+        h1_corpora=[
+            split_name
+            for split_name in experiment_config.h1_corpora
+            if split_name.startswith(replication_corpus_names)
+        ],
+    )
+    model_configs = ModelConfigs(replication_corpus_config, replication_experiment_config)
+    return model_configs
+
+
+def add_model_argument(
+    argument_parser: argparse.ArgumentParser,
+    primary_model_name: ModelName = PRIMARY_MODEL_NAME,
+) -> None:
+    argument_parser.add_argument(
+        '--model', type=ModelName, choices=list(ModelName), default=primary_model_name,
+    )

@@ -7,8 +7,11 @@ from src.core.utils import PoolingType
 
 CORE_DIR = Path(__file__).parent
 SRC_DIR = CORE_DIR.parent
-SCRIPTS_DIR = SRC_DIR / 'scripts'
 ROOT_DIR = SRC_DIR.parent
+SCRIPTS_DIR = SRC_DIR / 'scripts'
+PLOTS_DIR = SRC_DIR / 'plots'
+
+PAPER_STYLE_FILENAME = 'paper'
 
 DATA_DIR = ROOT_DIR / 'data'
 RAW_DATA_DIR = DATA_DIR / '00_raw'
@@ -30,9 +33,11 @@ H1_NULL_PREFIX = 'null_'
 H1_FLOORS_PREFIX = 'floors_'
 
 Q1_PROJECTIONS_PREFIX = 'q1_projections_'
+Q1_SHUFFLED_PROJECTIONS_PREFIX = 'q1_shuffled_projections_'
 Q1_RESULTS_PREFIX = 'q1_results_'
 Q3_RESULTS_PREFIX = 'q3_results_'
 Q4_RESULTS_PREFIX = 'q4_results_'
+Q4_ROBUSTNESS_PREFIX = 'q4_robustness_'
 
 FOLD_IDS_PREFIX = 'fold_ids_'
 PAIR_EDIT_DATA_PREFIX = 'q4_pair_edit_data_'

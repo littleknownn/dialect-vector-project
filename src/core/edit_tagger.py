@@ -274,7 +274,7 @@ def _get_ending_class(
     if terminal_punctuation_pattern.search(ending_class):
         return ending_class 
     if ending_class == '':
-        return 'none' # why hardcode this
+        return 'none'
     return 'other'
 
 
@@ -365,6 +365,45 @@ def compute_pair_controls(
     return pair_controls
 
 
+def _get_edit_kind_filtered(
+    aae_words: tuple[str, ...],
+    sae_words: tuple[str, ...],
+    removed_words: frozenset[str],
+    tagger_inputs: Q4TaggerInputs,
+) -> Q4EditKind:
+    reduced_tagger_inputs = tagger_inputs._replace(
+        grammar_words=tagger_inputs.grammar_words - removed_words,
+    )
+    edit_kind = _get_edit_kind(aae_words, sae_words, reduced_tagger_inputs)
+    return edit_kind
+
+
+def _make_word_edit(
+    aae_words: tuple[str, ...],
+    sae_words: tuple[str, ...],
+    distance: int,
+    tagger_inputs: Q4TaggerInputs,
+) -> Q4Edit:
+    edit_kind = _get_edit_kind(aae_words, sae_words, tagger_inputs)
+    edit_kind_without_aint = (
+        _get_edit_kind_filtered(aae_words, sae_words, tagger_inputs.aint_words, tagger_inputs)
+        if tagger_inputs.aint_words.intersection(aae_words)
+        else edit_kind
+    )
+    edit_kind_by_removed_marker_word = {
+        word: _get_edit_kind_filtered(aae_words, sae_words, frozenset({word}), tagger_inputs)
+        for word in sorted(tagger_inputs.grammar_words.intersection(aae_words))
+    }
+    word_edit = Q4Edit(
+        kind=edit_kind,
+        distance=distance,
+        size=max(len(aae_words), len(sae_words)),
+        kind_without_aint=edit_kind_without_aint,
+        kind_by_removed_marker_word=edit_kind_by_removed_marker_word,
+    )
+    return word_edit
+
+
 def _compute_word_edits(
     aae_words: list[str],
     sae_words: list[str],
@@ -372,14 +411,11 @@ def _compute_word_edits(
 ) -> list[Q4Edit]:
     matcher = difflib.SequenceMatcher(None, aae_words, sae_words, autojunk=False)
     word_edits = [
-        Q4Edit(
-            kind=_get_edit_kind(
-                tuple(aae_words[aae_start:aae_end]),
-                tuple(sae_words[sae_start:sae_end]),
-                tagger_inputs,
-            ),
+        _make_word_edit(
+            aae_words=tuple(aae_words[aae_start:aae_end]),
+            sae_words=tuple(sae_words[sae_start:sae_end]),
             distance=max(len(aae_words) - aae_end, 1),
-            size=max(aae_end - aae_start, sae_end - sae_start),
+            tagger_inputs=tagger_inputs,
         )
         for tag, aae_start, aae_end, sae_start, sae_end in matcher.get_opcodes()
         if tag != 'equal'
@@ -416,6 +452,8 @@ def _compute_case_and_punctuation_edits(
                     kind=Q4EditKind.CAPITALIZATION,
                     distance=max(num_words_after[aae_idx + 1], 1),
                     size=1,
+                    kind_without_aint=Q4EditKind.CAPITALIZATION,
+                    kind_by_removed_marker_word={},
                 )
                 for aae_idx, sae_idx
                 in zip(
@@ -432,6 +470,8 @@ def _compute_case_and_punctuation_edits(
                 kind=Q4EditKind.PUNCTUATION,
                 distance=max(num_words_after[aae_end], 1),
                 size=1,
+                kind_without_aint=Q4EditKind.PUNCTUATION,
+                kind_by_removed_marker_word={},
             ))
 
     return case_and_punctuation_edits

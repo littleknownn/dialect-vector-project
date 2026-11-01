@@ -1,6 +1,10 @@
 from collections.abc import Callable
+import math
 
-from scipy.stats import rankdata
+from scipy.stats import (
+    rankdata,
+    t as t_distribution,
+)
 import torch
 import torch.nn.functional as F
 
@@ -51,6 +55,19 @@ def compute_partial_spearman(
     return partial_spearman
 
 
+def compute_partial_spearman_p_value(
+    partial_correlation: float,
+    num_values: int,
+    num_covariates: int,
+    num_correlated_variables: int = 2,
+    num_tails: int = 2,
+) -> float:
+    degrees_of_freedom = num_values - num_correlated_variables - num_covariates
+    t_statistic = partial_correlation * math.sqrt((degrees_of_freedom / (1 - partial_correlation ** 2)))
+    p_value = float(num_tails * t_distribution.sf(abs(t_statistic), degrees_of_freedom))
+    return p_value
+
+
 def compute_bootstrap_draws(
     values: torch.Tensor,
     statistic: Callable[[torch.Tensor], torch.Tensor],
@@ -87,11 +104,29 @@ def compute_percentile_ci(
     estimate: float | None = None,
 ) -> CIStats:
     quantiles = torch.tensor([p_alpha / 2, 1 - p_alpha / 2], dtype=torch.float64, device=draws.device)
-    ci_lower, ci_upper = torch.quantile(draws.double(), quantiles).tolist()
+    ci_lower, ci_upper = torch.nanquantile(draws.double(), quantiles).tolist()
     if estimate is None:
-        estimate = float(draws.double().mean())
+        estimate = float(draws.double().nanmean())
     ci_stats = CIStats(estimate=estimate, ci_lower=ci_lower, ci_upper=ci_upper)
     return ci_stats
+
+
+def compute_bootstrap_p_value(
+    draws: torch.Tensor,
+    null_value: float,
+    num_tails: int = 2,
+) -> float:
+    valued_draws = draws[~draws.isnan()]
+    resampling_p_value_fn = lambda num_extreme_draws: (
+        (num_extreme_draws + 1) / (len(valued_draws) + 1)
+    )
+    num_draws_far_side = min(
+        int((valued_draws <= null_value).sum()),
+        int((valued_draws >= null_value).sum()),
+    )
+    one_sided_p_value = resampling_p_value_fn(num_draws_far_side)
+    p_value = min(1.0, num_tails * one_sided_p_value)
+    return p_value
 
 
 def compute_bootstrap_ci(

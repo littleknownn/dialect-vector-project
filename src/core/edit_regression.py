@@ -2,6 +2,7 @@ from typing import NamedTuple
 
 from scipy.optimize import least_squares
 import torch
+from tqdm import tqdm
 
 from src.core.config_utils import Q4RegressionSettings
 import src.core.stats_utils as stats_utils
@@ -17,8 +18,14 @@ from src.core.utils import (
 
 EDIT_KINDS: tuple[Q4EditKind, ...] = tuple(Q4EditKind)
 CONTENT_CHANGE_IDX: int = EDIT_KINDS.index(Q4EditKind.CONTENT_CHANGE)
+FREE_WEIGHTS_MASK: torch.Tensor = torch.tensor([
+    edit_kind != Q4EditKind.CONTENT_CHANGE
+    for edit_kind in EDIT_KINDS
+])
+
 NO_EDIT_IDX: int = -1
-_MAX_ABS_LOG_WEIGHT: float = 20.0 #
+NUM_SHAPE_EXPONENTS: int = 2
+_MAX_ABS_LOG_FREE_WEIGHT: float = 20.0 #
 
 
 class Inputs(NamedTuple):
@@ -43,6 +50,7 @@ class Fit(NamedTuple):
     curve: Q4CurveFunction
     settings: Q4RegressionSettings
     parameter_vector: torch.Tensor
+    converges: bool
 
 
 class Predictions(NamedTuple):
@@ -63,6 +71,7 @@ class Draws(NamedTuple):
     distance_decay_exponents: torch.Tensor
     size_exponents: torch.Tensor
     kind_shares: torch.Tensor
+    num_failed_fits: int
 
 
 def _filter_rows(
@@ -84,13 +93,13 @@ def fit_regression(
     curve: Q4CurveFunction,
     settings: Q4RegressionSettings,
     initial_fit: Fit | None = None,
-    edit_kinds: tuple[Q4EditKind, ...] = EDIT_KINDS,
+    free_weights_mask: torch.Tensor = FREE_WEIGHTS_MASK,
 ) -> Fit:
     initial_parameter_vector = (
         initial_fit.parameter_vector
         if initial_fit
         else torch.cat([
-            torch.zeros(len(edit_kinds), dtype=torch.float64),
+            torch.zeros(int(free_weights_mask.sum()), dtype=torch.float64),
             torch.tensor(
                 [
                     settings.initial_distance_decay_exponent,
@@ -104,12 +113,14 @@ def fit_regression(
     )
     compute_residuals_fn = lambda parameter_vector: (
         predict(
-            Fit(curve, settings, torch.from_numpy(parameter_vector)), inputs,
-        ).projections
-        - inputs.projections
+            Fit(curve, settings, torch.from_numpy(parameter_vector), converges=True),
+            inputs,
+        ).projections - inputs.projections
     ).numpy()
     solution = least_squares(compute_residuals_fn, initial_parameter_vector.numpy())
-    fit = Fit(curve, settings, torch.from_numpy(solution.x))
+    fit = Fit(
+        curve, settings, torch.from_numpy(solution.x), bool(solution.success),
+    )
     return fit
 
 
@@ -132,20 +143,19 @@ def predict(
 def unpack_parameters(
     fit: Fit,
     num_controls: int,
-    edit_kinds: tuple[Q4EditKind, ...] = EDIT_KINDS,
-    max_abs_log_weight: float = _MAX_ABS_LOG_WEIGHT,
-    content_change_idx: int = CONTENT_CHANGE_IDX,
+    max_abs_log_weight: float = _MAX_ABS_LOG_FREE_WEIGHT,
+    free_weights_mask: torch.Tensor = FREE_WEIGHTS_MASK,
+    num_shape_exponents: int = NUM_SHAPE_EXPONENTS,
 ) -> Parameters:
-    num_kinds = len(edit_kinds)
-    curve_start = num_kinds + 2
-    curve_end = curve_start + len(_get_initial_curve_parameters(fit.curve, fit.settings))
-    log_weights = torch.clamp(fit.parameter_vector[:num_kinds], -max_abs_log_weight, max_abs_log_weight)
+    num_curve_parameters = len(_get_initial_curve_parameters(fit.curve, fit.settings))
+    free_log_weights, shape_exponents, curve_parameters, control_coefficients = fit.parameter_vector.split([
+        int(free_weights_mask.sum()), num_shape_exponents, num_curve_parameters, num_controls,
+    ])
+    log_weights = torch.zeros(len(free_weights_mask), dtype=free_log_weights.dtype)
+    log_weights[free_weights_mask] = free_log_weights.clamp(-max_abs_log_weight, max_abs_log_weight)
 
-    weights = torch.exp(log_weights - log_weights[content_change_idx])
-    distance_decay_exponent = float(fit.parameter_vector[num_kinds])
-    size_exponent = float(fit.parameter_vector[num_kinds + 1])
-    curve_parameters = fit.parameter_vector[curve_start:curve_end]
-    control_coefficients = fit.parameter_vector[curve_end:curve_end + num_controls]
+    weights = torch.exp(log_weights)
+    distance_decay_exponent, size_exponent = shape_exponents.tolist()
     parameters = Parameters(
         weights=weights,
         distance_decay_exponent=distance_decay_exponent,
@@ -331,7 +341,6 @@ def compute_held_out_predictions(
             _filter_rows(inputs, ~is_held_out),
             fit.curve,
             fit.settings,
-            initial_fit=fit,
         )
         held_out_predictions[is_held_out] = predict(
             fold_fit, _filter_rows(inputs, is_held_out),
@@ -366,22 +375,57 @@ def compute_shuffled_r_squared(
     return shuffled_r_squared
 
 
+def count_edits_by_kind(
+    inputs: Inputs,
+    edit_kinds: tuple[Q4EditKind, ...] = EDIT_KINDS,
+) -> torch.Tensor:
+    edit_counts = torch.stack([
+        (inputs.edit_kind_indices == kind_idx).sum()
+        for kind_idx in range(len(edit_kinds))
+    ])
+    return edit_counts
+
+
+def relabel_edit_kinds(
+    inputs: Inputs,
+    relabel_mask: torch.Tensor,
+    new_edit_kind: Q4EditKind,
+    edit_kinds: tuple[Q4EditKind, ...] = EDIT_KINDS,
+) -> Inputs:
+    edit_kind_indices = torch.where(relabel_mask, edit_kinds.index(new_edit_kind), inputs.edit_kind_indices)
+    relabeled_inputs = inputs._replace(edit_kind_indices=edit_kind_indices)
+    return relabeled_inputs
+
+
 def bootstrap_regression(
     fit: Fit,
     inputs: Inputs,
     num_draws: int,
     seed: int,
+    edit_kinds: tuple[Q4EditKind, ...] = EDIT_KINDS,
 ) -> Draws:
     generator = torch.Generator().manual_seed(seed)
     num_pairs = len(inputs.projections)
+    num_kinds = len(edit_kinds)
  
     weights_list, distance_decay_exponents_list, size_exponent_list, kind_shares_list = [], [], [], []
-    for _ in range(num_draws):
+    num_failed_fits = 0
+    for _ in tqdm(range(num_draws), desc=f'{fit.curve} Bootstrap', leave=False):
         rows = torch.randint(num_pairs, (num_pairs,), generator=generator)
         resampled_inputs = _filter_rows(inputs, rows)
         draw_fit = fit_regression(resampled_inputs, fit.curve, fit.settings, initial_fit=fit)
+        
+        if not draw_fit.converges:
+            num_failed_fits += 1
+            weights_list.append(torch.full((num_kinds,), float('nan'), dtype=torch.float64))
+            distance_decay_exponents_list.append(float('nan'))
+            size_exponent_list.append(float('nan'))
+            kind_shares_list.append(torch.full((num_kinds,), float('nan'), dtype=torch.float64))
+            continue
+
         draw_parameters = unpack_parameters(draw_fit, inputs.controls.shape[1])
-        weights_list.append(draw_parameters.weights)
+        is_absent = count_edits_by_kind(resampled_inputs) == 0
+        weights_list.append(torch.where(is_absent, float('nan'), draw_parameters.weights))
         distance_decay_exponents_list.append(draw_parameters.distance_decay_exponent)
         size_exponent_list.append(draw_parameters.size_exponent)
         kind_shares_list.append(compute_shares(draw_fit, resampled_inputs).by_kind)
@@ -390,11 +434,13 @@ def bootstrap_regression(
     distance_decay_exponents=torch.tensor(distance_decay_exponents_list, dtype=torch.float64)
     size_exponents=torch.tensor(size_exponent_list, dtype=torch.float64)
     kind_shares=torch.stack(kind_shares_list)
+
     draws = Draws(
         weights=weights,
         distance_decay_exponents=distance_decay_exponents,
         size_exponents=size_exponents,
         kind_shares=kind_shares,
+        num_failed_fits=num_failed_fits,
     )    
     return draws
 
@@ -414,7 +460,11 @@ def compute_single_edit_weight_cis(
         coefficients = stats_utils.compute_regression_coefficients(feature_matrix[rows], projections[rows])
         kind_coefficients = coefficients[:len(present_kind_indices)]
         weights = kind_coefficients / kind_coefficients[content_change_position]
-        return weights
+        is_absent = feature_matrix[rows, :len(present_kind_indices)].sum(dim=0) == 0
+        if is_absent[content_change_position]:
+            return torch.full_like(weights, float('nan'))
+        present_weights = torch.where(is_absent, float('nan'), weights)
+        return present_weights
 
     num_edits = (inputs.edit_kind_indices != no_edit_idx).sum(dim=1)
     is_single_edit = num_edits == 1

@@ -2,8 +2,8 @@ import itertools
 from pathlib import Path
 from typing import NamedTuple
 
-from tqdm import tqdm
 import torch
+from tqdm import tqdm
 
 from src.core.config import (
     CORPUS_CONFIG,
@@ -69,6 +69,7 @@ def _load_h1_data(
     )
     return h1_data
 
+
 def _compute_h1_results(
     h1_data: H1Data,
     pooling_type: PoolingType,
@@ -82,7 +83,7 @@ def _compute_h1_results(
         get_sweep_tensor_filepath(
             difference_vectors_dir,
             sweep_identifier,
-            f'{paired_corpus_name}{DifferenceVector.OFFSET}',
+            f'{paired_corpus_name}{DifferenceVector.DIALECT}',
         ),
         weights_only=True,
     )

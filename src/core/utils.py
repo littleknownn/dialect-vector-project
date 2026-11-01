@@ -12,6 +12,13 @@ from typing import (
 )
 
 
+class ModelName(StrEnum):
+    LLAMA_3B = 'llama_3b'
+    LLAMA_8B = 'llama_8b'
+    OLMO_7B = 'olmo_7b'
+    GEMMA_2B = 'gemma_2b'
+
+
 class PoolingType(StrEnum):
     LAST = 'last'
     MEAN = 'mean'
@@ -63,9 +70,9 @@ class MetricType(StrEnum):
 
 
 class DifferenceVector(StrEnum):
-    OFFSET = ''
+    DIALECT = ''
     AUTHORSHIP = '_aae_minus_aae_back'
-    DIALECT = '_aae_back_minus_sae'
+    DIALECT_GEMINI = '_aae_back_minus_sae'
     NO_TYPOGRAPHY = '_no_typography'
     SAME_TERMINAL_PUNCTUATION = '_same_terminal_punctuation'
     NO_PROFANITY = '_no_profanity'
@@ -74,7 +81,7 @@ class DifferenceVector(StrEnum):
     def includes_aae_back(self) -> bool:
         return self in (
             DifferenceVector.AUTHORSHIP,
-            DifferenceVector.DIALECT,
+            DifferenceVector.DIALECT_GEMINI,
         )
 
 
@@ -83,6 +90,11 @@ class Q1ConsistencyLabel(StrEnum):
     PARTIAL = 'partial'
     WEAK = 'weak'
     POOLING_DEPENDENT = 'pooling_dependent'
+
+
+class Q1Statistic(StrEnum):
+    POSITIVE_PROJECTION_RATIO = 'positive_projection_ratio_ci'
+    STANDARDIZED_PROJECTION_MEAN = 'standardized_projection_mean_ci'
 
 
 class Q3EditCount(StrEnum):
@@ -98,6 +110,17 @@ class Q4EditVerdict(StrEnum):
     STRONGER = 'stronger'
     WEAKER = 'weaker'
     NOT_DIFFERENT = 'not_different'
+    TOO_RARE = 'too_rare'
+
+
+class Q4RobustnessVariant(StrEnum):
+    SINGLE_WORD_MARKERS = 'single_word_markers'
+    AINT_EXCLUDED = 'aint_excluded'
+    DISTANCE_FROM_TWO = 'distance_from_two'
+    NO_TYPOGRAPHY_VECTOR = 'no_typography_vector'
+    SAME_TERMINAL_PUNCTUATION_VECTOR = 'same_terminal_punctuation_vector'
+    NO_PROFANITY_VECTOR = 'no_profanity_vector'
+    LEAVE_ONE_OUT = 'leave_one_out'
 
 
 class Q4Stratum(StrEnum):
@@ -256,13 +279,22 @@ class Q1Results(TypedDict):
     shuffled_positive_projection_ratio: float
     shuffled_standardized_projection_mean: float
 
+    num_identical_pairs: int
+    nonidentical_pairs_positive_projection_ratio_ci: CIStats
+    nonidentical_pairs_standardized_projection_mean_ci: CIStats
+    difference_vector_cosine: float
+
 
 class Q3CountResults(TypedDict):
     spearman_ci: CIStats
     spearman_p_value: float
     spearman_p_value_fdr: float | None
     partial_spearman_ci: CIStats
+    partial_spearman_p_value: float
+    partial_spearman_p_value_fdr: float | None
     projection_mean_ci_by_bin: dict[int, CIStats]
+    bin_edges: list[float]
+    has_zero_bin: bool
 
 
 class Q3Results(TypedDict):
@@ -275,6 +307,8 @@ class Q4Edit(TypedDict):
     kind: Q4EditKind
     distance: int
     size: int
+    kind_without_aint: Q4EditKind
+    kind_by_removed_marker_word: dict[str, Q4EditKind]
 
 
 class Q4CurveResults(TypedDict):
@@ -292,6 +326,9 @@ class Q4CurveResults(TypedDict):
     calibration: list[list[float]]
     mean_residual_by_kind: dict[Q4EditKind, float]
     shuffled_r_squared: float
+    weight_p_values: dict[Q4EditKind, float] | None
+    weight_p_values_fdr: dict[Q4EditKind, float] | None
+    num_failed_fits: int
 
 
 class Q4Results(TypedDict):
@@ -305,6 +342,16 @@ class Q4Results(TypedDict):
     ceiling_minus_log_held_out_r_squared: CIStats
     verdicts: dict[Q4EditKind, Q4EditVerdict] | None
     single_edit_weights: dict[Q4EditKind, CIStats] | None
+
+
+class Q4RobustnessResults(TypedDict):
+    corpus_name: str
+    pooling_type: PoolingType
+    variant: Q4RobustnessVariant
+    removed_word: str | None
+    curve: Q4CurveFunction
+    num_marker_edits: int
+    weights: dict[Q4EditKind, CIStats]
 
 
 class PairControls(TypedDict):
@@ -360,10 +407,18 @@ class ExtractionLog(TypedDict):
     num_truncated_lines_by_split: dict[str, int]
 
 
+class FrozenInputHashes(NamedTuple):
+    text_annotations: dict[str, str]
+    estimators: dict[str, str]
+    profanity_list: str
+
+
 class FreezeRecord(TypedDict):
     source_code_hashes: dict[str, str]
     experiment_config: dict[str, Any]
     processed_data_hashes: dict[str, str]
+    frozen_input_hashes: dict[str, dict[str, str] | str]
+    declared_model_specs: dict[str, dict[str, Any]]
 
 
 class GeometricMetricsPair(NamedTuple):
@@ -387,6 +442,7 @@ class Q4TaggerInputs(NamedTuple):
     profanities: frozenset[str]
     respelling_threshold: float
     single_letter_respelling_threshold: float
+    aint_words: frozenset[str]
 
 
 def save_jsonl(
