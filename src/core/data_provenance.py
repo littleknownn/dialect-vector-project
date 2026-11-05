@@ -11,6 +11,7 @@ from src.core.config_utils import (
     ModelSpec,
 )
 from src.core.paths import (
+    ANALYSIS_DIR,
     CORE_DIR,
     EXTRACTION_LOG_FILENAME,
     FREEZE_RECORD_FILENAME,
@@ -128,6 +129,7 @@ def save_freeze_record(
     run_dirs: RunDirs,
     processed_data_dir: Path = PROCESSED_DATA_DIR,
     core_dir: Path = CORE_DIR,
+    analysis_dir: Path = ANALYSIS_DIR,
     scripts_dir: Path = SCRIPTS_DIR,
     raw_data_dir: Path = RAW_DATA_DIR,
     freeze_record_filename: str = FREEZE_RECORD_FILENAME,
@@ -138,7 +140,11 @@ def save_freeze_record(
     if freeze_record_filepath.exists():
         raise FileExistsError(f"Study already frozen: {freeze_record_filepath}")
     freeze_record = FreezeRecord(
-        source_code_hashes=compute_file_hashes(core_dir) | compute_file_hashes(scripts_dir),
+        source_code_hashes=(
+            compute_file_hashes(core_dir)
+            | compute_file_hashes(analysis_dir)
+            | compute_file_hashes(scripts_dir)
+        ),
         experiment_config=serialize_config(experiment_config),
         processed_data_hashes=compute_file_hashes(processed_data_dir),
         frozen_input_hashes=_compute_frozen_input_hashes(

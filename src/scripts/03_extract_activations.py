@@ -37,6 +37,7 @@ from src.core.paths import (
     get_sweep_identifier,
     get_sweep_tensor_filepath,
 )
+import src.core.text_utils as text_utils
 from src.core.utils import (
     ExtractionLog,
     PoolingType,
@@ -114,7 +115,7 @@ def _extract_activations(
             )
             boundary_token_indices = torch.tensor(
                 [
-                    _get_boundary_token_idx(
+                    text_utils.get_boundary_token_idx(
                         line_token_char_indices,
                         boundary_char_idx,
                     )
@@ -197,19 +198,6 @@ def _load_boundary_char_indices_by_split(
     return boundary_char_indices_by_split
 
 
-def _get_boundary_token_idx(
-    token_char_indices: torch.Tensor,
-    boundary_char_idx: int,
-) -> int:
-    token_end_char_indices = token_char_indices[:, 1]
-    is_before_boundary = (
-        (token_end_char_indices > 0)
-        & (token_end_char_indices <= boundary_char_idx)
-    )
-    boundary_token_idx = int(is_before_boundary.nonzero().max())
-    return boundary_token_idx
-
-
 def extract_and_save_activations(
     model: PreTrainedModel,
     tokenizer: PreTrainedTokenizerBase,
@@ -230,7 +218,7 @@ def extract_and_save_activations(
         split_name = corpus_path.stem
         if get_dataset_config(split_name, corpus_config) is None:
             continue
-        split_bar.set_postfix(sweep_identifier)
+        split_bar.set_postfix_str(split_name)
         target_layers = _get_split_target_layers(split_name, experiment_config)
         tqdm.write(f'Loading {split_name} Corpus...')
         

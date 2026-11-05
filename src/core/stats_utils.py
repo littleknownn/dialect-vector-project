@@ -213,6 +213,7 @@ def compute_fold_projections(
     fold_ids = fold_ids.to(difference_matrix.device)
     unit_differences = F.normalize(mean_vector_folds, dim=0)
     projections = torch.empty(len(difference_matrix), device=difference_matrix.device)
+    
     for fold_id in range(unit_differences.shape[1]):
         fold_mask = (fold_ids == fold_id)
         projections[fold_mask] = difference_matrix[fold_mask] @ unit_differences[:, fold_id]
@@ -237,3 +238,34 @@ def compute_calibration(
         for bin_id in range(num_bins)
     ]
     return calibration
+
+
+def compute_cluster_bootstrap_means(
+    per_positive_values: torch.Tensor,
+    cluster_ids: torch.Tensor,
+    num_draws: int,
+    seed: int,
+) -> torch.Tensor:
+    generator = torch.Generator().manual_seed(seed)
+    _, cluster_positions = cluster_ids.unique(return_inverse=True)
+    num_clusters = int(cluster_positions.max()) + 1
+
+    cluster_sums = torch.zeros(
+        num_clusters, dtype=torch.float64, device=per_positive_values.device,
+    ).index_add_(0, cluster_positions, per_positive_values.double())
+    cluster_counts = torch.zeros(
+        num_clusters, dtype=torch.float64, device=per_positive_values.device,
+    ).index_add_(0, cluster_positions, torch.ones_like(per_positive_values, dtype=torch.double))
+    sampled_clusters = torch.randint(num_clusters, (num_draws, num_clusters), generator=generator)
+    
+    bootstrap_means = cluster_sums[sampled_clusters].sum(dim=1) / cluster_counts[sampled_clusters].sum(dim=1)
+    return bootstrap_means
+
+
+def compute_one_sided_p_value(
+    null_values: torch.Tensor,
+    observed_value: float,
+) -> float:
+    p_value = (int((null_values >= observed_value).sum()) + 1) / (len(null_values) + 1)
+    return p_value
+

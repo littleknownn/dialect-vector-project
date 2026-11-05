@@ -56,62 +56,87 @@ class Q4OrthographicThresholds(NamedTuple):
 
 
 @dataclass
+class Q1Config:
+    labeled_bounds: Q1LabeledThresholds
+    fdr_vectors: tuple[DifferenceVector, ...]
+    layer_sweep_vectors: tuple[DifferenceVector, ...]
+    num_sign_flips: int
+    num_shuffled_pairings: int
+
+
+@dataclass
+class Q2Config:
+    primary_corpus_names: tuple[str, ...]
+    reported_corpus_names: tuple[str, ...]
+    midpoint_corpus_names: tuple[str, ...]
+    primary_pooling_types: tuple[PoolingType, ...]
+
+    num_negatives_per_positive: int
+    num_null_shuffles: int
+    min_auroc: float
+    power: float
+    sensitivity_vectors: tuple[DifferenceVector, ...]
+
+
+@dataclass
+class Q3Config:
+    edits_by_count: dict[Q3EditCount, tuple[Q4EditKind, ...]]
+    num_dose_bins: int
+
+
+@dataclass
+class TaggingConfig:
+    orthographic_thresholds: Q4OrthographicThresholds
+    respelling_threshold: float
+    single_letter_respelling_threshold: float
+    aint_words: tuple[str, ...]
+    function_words: tuple[str, ...]
+    grammar_words: tuple[str, ...]
+    copula_words: tuple[str, ...]
+
+
+@dataclass
+class Q4Config:
+    primary_curves: tuple[Q4CurveFunction, ...]
+    format_flags: tuple[str, ...]
+    regression_settings: Q4RegressionSettings
+    min_edits_for_verdict: int
+    num_held_out_folds: int
+    num_calibration_bins: int
+    num_bootstrap_samples: int
+    num_robustness_bootstrap_samples: int
+    robustness_distance_shift: int
+    marginal_effect_distances: tuple[int, ...]
+
+
+@dataclass
 class ExperimentConfig:
     model_hf_path: str
     attn_implementation: str | None
     load_in_4bit: bool
     bnb_4bit_quant_type: str
 
-    target_layers: list[int]
-    target_ranks: list[int]
-    target_alphas: list[float]
-
-    primary_layer: int
-    primary_pooling_type: PoolingType
-
-    debug_max_split_lines: int | None
-
-    h1_corpora: list[str]
-
-    num_equal_n_repeats: int
-    num_null_draws: int
-    num_cv_folds: int
-    
-    q1_labeled_bounds: Q1LabeledThresholds
-    q1_fdr_vectors: tuple[DifferenceVector, ...]
-    q1_layer_sweep_vectors: tuple[DifferenceVector, ...]
-    q1_num_sign_flips: int
-    q1_num_shuffled_pairings: int
-
-    q3_edits_by_count: dict[Q3EditCount, tuple[Q4EditKind, ...]]
-    q3_num_dose_bins: int
-    q3_q4_pooling_types: tuple[PoolingType, ...]
-
-    q4_primary_curves: tuple[Q4CurveFunction, ...]
-    q4_orthographic_thresholds: Q4OrthographicThresholds
-    q4_respelling_threshold: float
-    q4_single_letter_respelling_threshold: float
-    q4_aint_words: tuple[str, ...]
-    q4_function_words: tuple[str, ...]
-    q4_grammar_words: tuple[str, ...]
-    q4_copula_words: tuple[str, ...]
-    q4_format_flags: tuple[str, ...]
-    q4_regression_settings: Q4RegressionSettings
-    q4_num_held_out_folds: int
-    q4_num_calibration_bins: int
-    q4_num_bootstrap_samples: int
-    q4_min_edits_for_verdict: int
-    q4_num_robustness_bootstrap_samples: int
-    q4_robustness_distance_shift: int
-    q4_marginal_effect_distances: tuple[int, ...]
-    
     corpus_split_size: int
     batch_size: int
     max_seq_len: int
     random_seed: int
 
+    target_layers: list[int]
+    primary_layer: int
+    primary_pooling_type: PoolingType
+
+    num_cv_folds: int
     num_bootstrap_samples: int
     p_alpha: float
+
+    q1: Q1Config
+    q2: Q2Config
+    q3: Q3Config
+    q3_q4_pooling_types: tuple[PoolingType, ...]
+    tagging: TaggingConfig
+    q4: Q4Config
+    
+    debug_max_split_lines: int | None
 
 
 @dataclass

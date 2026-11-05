@@ -89,8 +89,8 @@ def _compute_edit_data_by_threshold(
     experiment_config: ExperimentConfig,
 ) -> dict[str, PairEditData]:
     edit_data_by_threshold = {
-        threshold_name: edit_tagger.compute_pair_edit_data(aae_text, sae_text, threshold, experiment_config.q4_function_words)
-        for threshold_name, threshold in experiment_config.q4_orthographic_thresholds._asdict().items()
+        threshold_name: edit_tagger.compute_pair_edit_data(aae_text, sae_text, threshold, experiment_config.tagging.function_words)
+        for threshold_name, threshold in experiment_config.tagging.orthographic_thresholds._asdict().items()
     }
     return edit_data_by_threshold
 
@@ -159,13 +159,13 @@ def annotate_and_save_pairs(
     profanity_list_filepath: Path = RAW_DATA_DIR / f'{PROFANITY_LIST_FILENAME}.txt',
 ) -> None:
     tagger_inputs = Q4TaggerInputs(
-        function_words=frozenset(experiment_config.q4_function_words),
-        grammar_words=frozenset(experiment_config.q4_grammar_words),
-        copula_words=frozenset(experiment_config.q4_copula_words),
+        function_words=frozenset(experiment_config.tagging.function_words),
+        grammar_words=frozenset(experiment_config.tagging.grammar_words),
+        copula_words=frozenset(experiment_config.tagging.copula_words),
         profanities=_load_profanities(profanity_list_filepath),
-        respelling_threshold=experiment_config.q4_respelling_threshold,
-        single_letter_respelling_threshold=experiment_config.q4_single_letter_respelling_threshold,
-        aint_words=frozenset(experiment_config.q4_aint_words)
+        respelling_threshold=experiment_config.tagging.respelling_threshold,
+        single_letter_respelling_threshold=experiment_config.tagging.single_letter_respelling_threshold,
+        aint_words=frozenset(experiment_config.tagging.aint_words)
     )
     for metadata_filepath in sorted(in_dir.glob(f'*{SplitSuffixes.PAIR_METADATA}*.json')):
         corpus_name, split_suffix = metadata_filepath.stem.split(SplitSuffixes.PAIR_METADATA)

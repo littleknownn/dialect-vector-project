@@ -6,6 +6,7 @@ import string
 from typing import NamedTuple
 
 import spacy
+import torch
 
 import src.core.text_rules as text_rules
 from src.core.utils import PairBoundary
@@ -215,6 +216,42 @@ def compute_pair_boundary(
         is_aae_back_shared=is_aae_back_shared,
     )
     return pair_boundary
+
+
+def compute_line_midpoint_char_idx(
+    text: str,
+    config: SupervisedDatasetConfig,
+) -> int | None:
+    midpoint_sort_key_fn = lambda candidate_boundary: (
+        candidate_boundary.distance_from_midpoint,
+        candidate_boundary.word_a.end(),
+    )
+    midpoint = _compute_boundary(
+        text,
+        text,
+        sort_fn=midpoint_sort_key_fn,
+        min_previous_words=config.boundary_min_previous_words,
+        min_following_words=config.boundary_min_following_words,
+    )
+    midpoint_char_idx = (
+        midpoint.word_a.end()
+        if midpoint
+        else None
+    )
+    return midpoint_char_idx
+
+
+def get_boundary_token_idx(
+    token_char_indices: torch.Tensor,
+    boundary_char_idx: int,
+) -> int:
+    token_end_char_indices = token_char_indices[:, 1]
+    is_before_boundary = (
+        (token_end_char_indices > 0)
+        & (token_end_char_indices <= boundary_char_idx)
+    )
+    boundary_token_idx = int(is_before_boundary.nonzero().max())
+    return boundary_token_idx
 
 
 def sentencize(text: str) -> list[str]:

@@ -22,9 +22,6 @@ import src.core.math_utils as math_utils
 from src.core.paths import (
     FOLD_IDS_PREFIX,
     PROCESSED_DATA_DIR,
-    H1_FLOORS_PREFIX,
-    H1_NULL_PREFIX,
-    H1_SVD_PREFIX,
     RunDirs,
     get_run_dirs,
     get_sweep_identifier,
@@ -36,7 +33,6 @@ from src.core.utils import (
     PoolingType,
     SplitSuffixes,
     load_json,
-    save_json,
 )
 
 
@@ -177,69 +173,6 @@ def _save_estimators(
         )
 
 
-def _compute_and_save_h1_tensors(
-    activations: dict[str, torch.Tensor],
-    sweep_identifier: str,
-    max_rank: int,
-    experiment_config: ExperimentConfig,
-    out_dir: Path,
-) -> None:
-    tqdm.write(f'Computing H1 Calibrations for Sweep {sweep_identifier}...')
-    torch.manual_seed(experiment_config.random_seed) #
-    activation_matrices = {
-        split_name: activations[split_name]
-        for split_name in experiment_config.h1_corpora
-    }
-
-    min_matrix_len = min(len(matrix) for matrix in activation_matrices.values())
-    min_half_len = min_matrix_len // 2
-
-    svd_tensors = {
-        corpus_name: []
-        for corpus_name in experiment_config.h1_corpora
-    }
-    floors = {
-        corpus_name: {
-            rank: []
-            for rank in range(1, max_rank + 1)
-        }
-        for corpus_name in experiment_config.h1_corpora
-    }
-
-    for _, (corpus_name, matrix) in itertools.product(
-        range(experiment_config.num_equal_n_repeats),
-        activation_matrices.items(),
-    ):
-        indices = torch.randperm(len(matrix), device=device)
-        half_1, half_2 = matrix[indices[:min_half_len]], matrix[indices[min_half_len:min_matrix_len]] #
-
-        basis_1 = math_utils.compute_svd_estimator(half_1, max_rank)
-        basis_2 = math_utils.compute_svd_estimator(half_2, max_rank)
-
-        for rank in range(1, max_rank + 1):
-            rank_basis_1 = basis_1[:, :rank].contiguous()
-            rank_basis_2 = basis_2[:, :rank].contiguous()
-            chordal_distance = math_utils.compute_geometric_metrics(rank_basis_1, rank_basis_2).chordal_distance.item()
-            floors[corpus_name][rank].append(chordal_distance)
-        svd_tensors[corpus_name].append(basis_1)
-
-    centered_pooled_activations_matrix = torch.cat([
-        matrix[:min_half_len] - matrix[:min_half_len].mean(dim=0)
-        for matrix in activation_matrices.values()
-    ])
-
-    null_tensors = [
-        math_utils.compute_matched_covariance_matrix(centered_pooled_activations_matrix, max_rank)
-        for _ in tqdm(range(experiment_config.num_null_draws), desc='H1 Nulls', leave=False)
-    ]
-    torch.save(torch.stack(null_tensors).cpu(), out_dir / f'{H1_NULL_PREFIX}{sweep_identifier}.pt')
-
-    for corpus_name, tensors in svd_tensors.items():
-        torch.save(torch.stack(tensors).cpu(), out_dir / f'{H1_SVD_PREFIX}{corpus_name}_{sweep_identifier}.pt')
-
-    save_json(floors, out_dir, f'{H1_FLOORS_PREFIX}{sweep_identifier}')
-
-
 def _compute_difference_matrices(
     pair: SupervisedPair,
     activations:  dict[str, torch.Tensor],
@@ -315,7 +248,6 @@ def compute_and_save_estimators(
     processed_data_dir: Path = PROCESSED_DATA_DIR,
 ) -> None:
     split_lists = _get_split_lists(corpus_config)
-    max_rank = max(experiment_config.target_ranks)
 
     sweep_tuples = itertools.product(
         experiment_config.target_layers,
@@ -341,7 +273,7 @@ def compute_and_save_estimators(
     sweep_bar = tqdm(sweep_tuples, desc='04 Computing Estimators', leave=True)
     for layer, pooling_type in sweep_bar:
         sweep_identifier = get_sweep_identifier(layer, pooling_type)
-        sweep_bar.set_postfix(sweep_identifier)
+        sweep_bar.set_postfix_str(sweep_identifier)
         split_names = (
             split_lists.supervised_split_names
             if pooling_type.is_paired_only
@@ -351,9 +283,6 @@ def compute_and_save_estimators(
             split_name: _load_activation_matrix(split_name, sweep_identifier, run_dirs.activations)
             for split_name in split_names
         }
-        
-        if layer == experiment_config.primary_layer and not pooling_type.is_paired_only:
-            _compute_and_save_h1_tensors(activations, sweep_identifier, max_rank, experiment_config, run_dirs.h1_estimators)
 
         estimators = _compute_estimators(split_lists, activations, supervised_pair_masks_dict, fold_ids_dict, layer, pooling_type, experiment_config, run_dirs)
         _save_estimators(estimators, sweep_identifier, run_dirs)

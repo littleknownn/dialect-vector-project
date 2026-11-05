@@ -8,6 +8,7 @@ from src.core.utils import PoolingType
 CORE_DIR = Path(__file__).parent
 SRC_DIR = CORE_DIR.parent
 ROOT_DIR = SRC_DIR.parent
+ANALYSIS_DIR = SRC_DIR / 'analysis'
 SCRIPTS_DIR = SRC_DIR / 'scripts'
 PLOTS_DIR = SRC_DIR / 'plots'
 
@@ -24,18 +25,14 @@ PROCESSING_LOG_FILENAME = 'processing_log'
 EXTRACTION_LOG_FILENAME = 'extraction_log'
 FREEZE_RECORD_FILENAME = 'freeze_record'
 
-BEHAVIORAL_RESULTS_FILENAME = 'behavioral_results'
-SWEEP_RESULTS_FILENAME = 'sweep_results'
-H1_RESULTS_FILENAME = 'h1_results'
-
-H1_SVD_PREFIX = 'svd_'
-H1_NULL_PREFIX = 'null_'
-H1_FLOORS_PREFIX = 'floors_'
-
 Q1_PROJECTIONS_PREFIX = 'q1_projections_'
 Q1_SHUFFLED_PROJECTIONS_PREFIX = 'q1_shuffled_projections_'
 Q1_RESULTS_PREFIX = 'q1_results_'
+
+Q2_RESULTS_FILENAME = 'q2_results'
+
 Q3_RESULTS_PREFIX = 'q3_results_'
+
 Q4_RESULTS_PREFIX = 'q4_results_'
 Q4_ROBUSTNESS_PREFIX = 'q4_robustness_'
 
@@ -49,13 +46,10 @@ class RunDirs(NamedTuple):
     token_states: Path
     
     difference_vectors: Path
-    h1_estimators: Path
     fold_vectors: Path
-    sweeps: Path
 
     pair_results: Path
     transfer_results: Path
-    steering_results: Path
     figures: Path
 
 
@@ -75,13 +69,10 @@ def get_run_dirs(
         token_states=activations_dir / 'token_states',
         
         difference_vectors=estimators_dir / 'difference_vectors',
-        h1_estimators=estimators_dir / 'h1',
         fold_vectors=estimators_dir / 'fold_vectors',
-        sweeps=run_dir / '05_sweeps',
         
         pair_results=run_dir / '06_pair',
         transfer_results=run_dir / '07_transfer',
-        steering_results=run_dir / '08_steering',
         figures=run_dir / 'figures',
     )
     

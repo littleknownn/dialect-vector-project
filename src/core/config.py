@@ -12,6 +12,11 @@ from src.core.config_utils import (
     HFSourceConfig,
     ModelConfigs,
     ModelSpec,
+    Q1Config,
+    Q2Config,
+    Q3Config,
+    Q4Config,
+    TaggingConfig,
     Q1LabeledThresholds,
     Q1Thresholds,
     Q4OrthographicThresholds,
@@ -44,130 +49,140 @@ MODEL_SPECS: dict[ModelName, ModelSpec] = {
         'google/gemma-2-2b', primary_layer=13, attn_implementation='eager',
     ),
 }
-REPLICATION_CORPUS_NAMES: tuple[str, ...] = ('real_aae')
+REPLICATION_CORPUS_NAMES: tuple[str, ...] = ('real_aae', 'coraal_merged')
 
 
 EXPERIMENT_CONFIG = ExperimentConfig(
     model_hf_path=MODEL_SPECS[PRIMARY_MODEL_NAME].model_hf_path,
     attn_implementation=MODEL_SPECS[PRIMARY_MODEL_NAME].attn_implementation,
-    
     load_in_4bit=False,
     bnb_4bit_quant_type='nf4',
-
-    target_layers=[4, 8, 14, 20, 24],
-    target_ranks=[4],
-    target_alphas=[
-        -1.0, -0.75, -0.5, -0.25, 0.0, 0.25, 0.5, 0.75, 1.0,
-    ],
-
-    primary_layer=MODEL_SPECS[PRIMARY_MODEL_NAME].primary_layer,
-    primary_pooling_type=PoolingType.BOUNDARY,
-    
-    debug_max_split_lines=None,
-
-    h1_corpora=[
-        'twitter_aae',
-        'aave_social_media',
-        'aave_lyrics',
-        'coraal_merged',
-        'wikitext',
-        'real_aae_aae_supervised',
-        'real_aae_sae_supervised',
-    ],
-
-    num_equal_n_repeats=100,
-    num_null_draws=200,
-    num_cv_folds=5,
-
-    q1_labeled_bounds=Q1LabeledThresholds(
-        consistent=Q1Thresholds(
-            positive_projection_ratio=0.90,
-            standardized_mean_ci_lower=1.0,
-        ),
-        weak=Q1Thresholds(
-            positive_projection_ratio=0.70,
-            standardized_mean_ci_lower=0.5,
-        ),
-    ),
-    q1_fdr_vectors=(DifferenceVector.DIALECT, DifferenceVector.AUTHORSHIP, DifferenceVector.DIALECT_GEMINI),
-    q1_layer_sweep_vectors=(DifferenceVector.DIALECT,),
-    q1_num_sign_flips=10_000,
-    q1_num_shuffled_pairings=1_000,
-
-    q3_edits_by_count={
-        Q3EditCount.TOTAL: tuple(Q4EditKind),
-        Q3EditCount.ORTHOGRAPHIC: (
-            Q4EditKind.ORTHOGRAPHIC,
-        ),
-        Q3EditCount.FUNCTION_WORD: (
-            Q4EditKind.FUNCTION_WORD,
-            Q4EditKind.COPULA_ADDED,
-        ),
-        Q3EditCount.LEXICAL: (
-            Q4EditKind.FILTER_FLAGGED_WORD,
-            Q4EditKind.GRAMMAR_WORD,
-            Q4EditKind.ADDED_OR_DROPPED,
-            Q4EditKind.SHORTHAND_FUNCTION_WORDS,
-            Q4EditKind.SHORTHAND_EXPANDED,
-            Q4EditKind.CONTENT_CHANGE,
-        ),
-        Q3EditCount.MECHANICS: (
-            Q4EditKind.CAPITALIZATION,
-            Q4EditKind.PUNCTUATION,
-        ),
-    },
-    q3_num_dose_bins=5,
-    q3_q4_pooling_types=(PoolingType.BOUNDARY, PoolingType.MEAN),
-
-    q4_primary_curves=(Q4CurveFunction.LOG, Q4CurveFunction.CEILING),
-    q4_orthographic_thresholds=Q4OrthographicThresholds(
-        strict=0.75,
-        relaxed=0.6,
-        loose=0.5,
-    ),
-    q4_respelling_threshold=0.6,
-    q4_single_letter_respelling_threshold=0.7,
-    q4_aint_words=tuple("""
-        aint ain't
-    """.split()),
-    q4_function_words=tuple('''
-        the a an is are was were be been am do does did has have had to of in on at
-        for and but that it they he she we you i not no with it's that's what who this
-        these those my your his her their our
-    '''.split()),
-    q4_grammar_words=tuple('''
-        ain't aint be done finna gon tryna nothing nobody nowhere none
-    '''.split()),
-    q4_copula_words=('is', 'are'),
-    q4_format_flags=('ending_changed', 'case_changed', 'tag_count_changed', 'has_asterisk'),
-    q4_regression_settings=Q4RegressionSettings(
-        free_shape_breakpoints=(
-            0.5, 1.0, 1.5, 2.0, 3.0,
-        ),
-        initial_parameters_by_curve={
-            Q4CurveFunction.LOG: (1.0,), # scale
-            Q4CurveFunction.CEILING: (3.0, 0.0), # top, log half-effect dose
-            Q4CurveFunction.STRAIGHT: (0.5, 0.5), # slope, intercept
-            Q4CurveFunction.FREE_SHAPE: (1.0,), # slope (bends at 0)
-        },
-        initial_distance_decay_exponent=0.5,
-        initial_size_exponent=0.2,
-    ),
-    q4_num_held_out_folds=5,
-    q4_num_calibration_bins=10,
-    q4_num_bootstrap_samples=2_000,
-    q4_min_edits_for_verdict=30,
-    q4_num_robustness_bootstrap_samples=300,
-    q4_robustness_distance_shift=1,
-    q4_marginal_effect_distances=(1, 3),
     
     corpus_split_size=3_782,
     batch_size=32,
     max_seq_len=64,
     random_seed=42,
 
+    target_layers=[4, 8, 14, 20, 24],
+
+    primary_layer=MODEL_SPECS[PRIMARY_MODEL_NAME].primary_layer,
+    primary_pooling_type=PoolingType.BOUNDARY,
+
+    num_cv_folds=5,
     num_bootstrap_samples=10_000,
     p_alpha=0.05,
+
+    q1=Q1Config(
+        labeled_bounds=Q1LabeledThresholds(
+            consistent=Q1Thresholds(
+                positive_projection_ratio=0.90,
+                standardized_mean_ci_lower=1.0,
+            ),
+            weak=Q1Thresholds(
+                positive_projection_ratio=0.70,
+                standardized_mean_ci_lower=0.5,
+            ),
+        ),
+        fdr_vectors=(DifferenceVector.DIALECT, DifferenceVector.AUTHORSHIP, DifferenceVector.DIALECT_GEMINI),
+        layer_sweep_vectors=(DifferenceVector.DIALECT,),
+        num_sign_flips=10_000,
+        num_shuffled_pairings=1_000,
+    ),
+
+    q2=Q2Config(
+        primary_corpus_names=(
+            'twitter_aae', 'aave_lyrics', 'coraal_merged', 'real_aae',
+        ),
+        reported_corpus_names=('aave_social_media',),
+        midpoint_corpus_names=('coraal_merged',),
+        primary_pooling_types=(PoolingType.MEAN, PoolingType.LAST),
+        num_negatives_per_positive=5,
+        num_null_shuffles=10_000,
+        min_auroc=0.55,
+        power=0.80,
+        sensitivity_vectors=(
+            DifferenceVector.NO_TYPOGRAPHY,
+            DifferenceVector.SAME_TERMINAL_PUNCTUATION,
+            DifferenceVector.NO_PROFANITY,
+        ),
+    ),
+
+    q3=Q3Config(
+        edits_by_count={
+            Q3EditCount.TOTAL: tuple(Q4EditKind),
+            Q3EditCount.ORTHOGRAPHIC: (
+                Q4EditKind.ORTHOGRAPHIC,
+                Q4EditKind.SHORTHAND_FUNCTION_WORDS,
+                Q4EditKind.SHORTHAND_EXPANDED,
+            ),
+            Q3EditCount.CASE_AND_PUNCTUATION: (
+                Q4EditKind.CAPITALIZATION,
+                Q4EditKind.PUNCTUATION,
+            ),
+            Q3EditCount.LEXICAL: (
+                Q4EditKind.CONTENT_CHANGE,
+                Q4EditKind.FILTER_FLAGGED_WORD,
+                Q4EditKind.ADDED_OR_DROPPED,
+            ),
+            Q3EditCount.GRAMMATICAL: (
+                Q4EditKind.GRAMMAR_WORD,
+                Q4EditKind.FUNCTION_WORD,
+                Q4EditKind.COPULA_ADDED,
+            ),
+        },
+        num_dose_bins=5,
+    ),
+
+    q3_q4_pooling_types=(PoolingType.BOUNDARY, PoolingType.MEAN),
+
+    tagging=TaggingConfig(
+        orthographic_thresholds=Q4OrthographicThresholds(
+            strict=0.75,
+            relaxed=0.6,
+            loose=0.5,
+        ),
+        respelling_threshold=0.6,
+        single_letter_respelling_threshold=0.7,
+        aint_words=tuple("""
+            aint ain't
+        """.split()),
+        function_words=tuple('''
+            the a an is are was were be been am do does did has have had to of in on at
+            for and but that it they he she we you i not no with it's that's what who this
+            these those my your his her their our
+        '''.split()),
+        grammar_words=tuple('''
+            ain't aint be done finna gon nothing nobody nowhere none
+        '''.split()),
+        copula_words=('is', 'are'),
+    ),
+
+    q4=Q4Config(
+        primary_curves=(Q4CurveFunction.LOG, Q4CurveFunction.CEILING),
+        format_flags=('ending_changed', 'case_changed', 'tag_count_changed', 'has_asterisk'),
+        regression_settings=Q4RegressionSettings(
+            free_shape_breakpoints=(
+                0.5, 1.0, 1.5, 2.0, 3.0,
+            ),
+            initial_parameters_by_curve={
+                Q4CurveFunction.LOG: (1.0,), # scale
+                Q4CurveFunction.CEILING: (3.0, 0.0), # top, log half-effect dose
+                Q4CurveFunction.STRAIGHT: (0.5, 0.5), # slope, intercept
+                Q4CurveFunction.FREE_SHAPE: (1.0,), # slope (bends at 0)
+            },
+            initial_distance_decay_exponent=0.5,
+            initial_size_exponent=0.2,
+        ),
+        min_edits_for_verdict=30,
+        num_held_out_folds=5,
+        num_calibration_bins=10,
+        num_bootstrap_samples=2_000,
+        num_robustness_bootstrap_samples=300,
+        robustness_distance_shift=1,
+        marginal_effect_distances=(1, 3),
+    ),
+    
+    debug_max_split_lines=None,
 )
 
 
@@ -372,17 +387,24 @@ def get_model_configs(
         corpus_name: corpus_config[corpus_name]
         for corpus_name in replication_corpus_names
     }
+    keep_replication_corpora = lambda corpus_names: tuple(
+        corpus_name
+        for corpus_name in corpus_names
+        if corpus_name in replication_corpus_names
+    )
+    replication_q2_config = dataclasses.replace(
+        experiment_config.q2,
+        primary_corpus_names=keep_replication_corpora(experiment_config.q2.primary_corpus_names),
+        reported_corpus_names=keep_replication_corpora(experiment_config.q2.reported_corpus_names),
+        midpoint_corpus_names=keep_replication_corpora(experiment_config.q2.midpoint_corpus_names),
+    )
     replication_experiment_config = dataclasses.replace(
         experiment_config,
         model_hf_path=model_spec.model_hf_path,
         attn_implementation=model_spec.attn_implementation,
         target_layers=[model_spec.primary_layer],
         primary_layer=model_spec.primary_layer,
-        h1_corpora=[
-            split_name
-            for split_name in experiment_config.h1_corpora
-            if split_name.startswith(replication_corpus_names)
-        ],
+        q2=replication_q2_config,
     )
     model_configs = ModelConfigs(replication_corpus_config, replication_experiment_config)
     return model_configs

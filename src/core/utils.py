@@ -64,11 +64,6 @@ class AaeFeature(StrEnum):
     UNCONJUGATED_AINT = 'unconjugated_aint'
 
 
-class MetricType(StrEnum):
-    LLR_SHIFT = 'llr_shift'
-    PERPLEXITY = 'perplexity'
-
-
 class DifferenceVector(StrEnum):
     DIALECT = ''
     AUTHORSHIP = '_aae_minus_aae_back'
@@ -97,12 +92,25 @@ class Q1Statistic(StrEnum):
     STANDARDIZED_PROJECTION_MEAN = 'standardized_projection_mean_ci'
 
 
+class Q2TransferLabel(StrEnum):
+    TRANSFER = 'transfer'
+    SMALL = 'small'
+    BOUNDED_NULL = 'bounded_null'
+    INCONCLUSIVE = 'inconclusive'
+
+
+class Q2Family(StrEnum):
+    PRIMARY = 'primary'
+    SECONDARY = 'secondary'
+    DESCRIPTIVE = 'descriptive'
+
+
 class Q3EditCount(StrEnum):
     TOTAL = 'total'
     ORTHOGRAPHIC = 'orthographic'
-    FUNCTION_WORD = 'function_word'
+    CASE_AND_PUNCTUATION = 'case_and_punctuation'
+    GRAMMATICAL = 'grammatical'
     LEXICAL = 'lexical'
-    MECHANICS = 'mechanics'
     PROBE_COUNT = 'probe_count'
 
 
@@ -157,6 +165,9 @@ class SeedOffset(IntEnum):
     SIGN_FLIP = 2
     SHUFFLED_PAIRING = 3
     HALF_SPLITS = 4
+    Q2_MATCHING = 5
+    Q2_BOOTSTRAP = 6
+    Q2_LABEL_SHUFFLE = 7
     Q3_Q4_BOOTSTRAP = 8
     Q4_HELD_OUT_FOLDS = 9
     Q4_SHUFFLED_PROJECTIONS = 15
@@ -204,53 +215,6 @@ class CIStats(TypedDict):
     ci_upper: float
 
 
-class AucSummary(TypedDict):
-    layer: int
-    pooling_type: PoolingType
-    rank: int
-    estimator_name: str
-    corpus_name: str
-    metric: MetricType
-    auc_pos: float
-    auc_neg: float
-
-
-class FdrSummary(TypedDict):
-    layer: int
-    pooling_type: PoolingType
-    rank: int
-    estimator_name: str
-    corpus_name: str
-    metric: MetricType
-    alpha: float
-    p_value_fdr: float
-
-
-class BehavioralSummary(TypedDict):
-    auc: list[AucSummary]
-    fdr: list[FdrSummary]
-
-
-class SweepSummary(TypedDict):
-    layer: int
-    pooling_type: PoolingType
-    rank: int
-    estimator_name: str
-    corpus_name: str
-    metric: MetricType
-    alpha: float
-    value: float
-    p_value: float
-
-
-class H1Results(TypedDict):
-    supervised_vector_norm: float
-    floors: dict[str, list[float]]
-    pair_distances: dict[str, list[float]]
-    null_distances: list[float]
-    projection_energies: dict[str, list[float]]
-
-
 class Q1Results(TypedDict):
     corpus_name: str
     label: Q1ConsistencyLabel
@@ -283,6 +247,30 @@ class Q1Results(TypedDict):
     nonidentical_pairs_positive_projection_ratio_ci: CIStats
     nonidentical_pairs_standardized_projection_mean_ci: CIStats
     difference_vector_cosine: float
+
+
+class Q2Results(TypedDict):
+    corpus_name: str
+    layer: int
+    pooling_type: PoolingType
+    vector: DifferenceVector
+    positive_probes: list[AaeFeature]
+    excludes_filter_flagged_words: bool
+    family: Q2Family
+    num_positives: int
+    num_dropped_positives: int
+    num_short_positives: int
+    num_probes_after_cut_lines: int
+    mean_num_negatives: float
+    num_unique_negatives: int
+    auroc_ci: CIStats
+    standardized_mean_difference_ci: CIStats
+    null_p_value: float | None
+    null_p_value_fdr: float | None
+    null_band: list[float] | None
+    baseline_aurocs: dict[str, float]
+    min_detectable_auroc: float
+    label: Q2TransferLabel | None
 
 
 class Q3CountResults(TypedDict):
@@ -419,20 +407,6 @@ class FreezeRecord(TypedDict):
     processed_data_hashes: dict[str, str]
     frozen_input_hashes: dict[str, dict[str, str] | str]
     declared_model_specs: dict[str, dict[str, Any]]
-
-
-class GeometricMetricsPair(NamedTuple):
-    principal_angles: float
-    chordal_distance: float
-
-
-class SweepKey(NamedTuple):
-    layer: int
-    pooling_type: PoolingType
-    rank: int
-    estimator_name: str
-    corpus_name: str
-    metric: MetricType
 
 
 class Q4TaggerInputs(NamedTuple):
