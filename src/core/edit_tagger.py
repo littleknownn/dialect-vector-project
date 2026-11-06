@@ -340,8 +340,8 @@ def compute_pair_edit_data(
         case_changed=_get_case_style(aae_text) != _get_case_style(sae_text),
         tag_count_changed=_get_num_handle_tags(aae_text) != _get_num_handle_tags(sae_text),
         has_asterisk=has_asterisk,
-        num_words_aae=len(aae_text.split()), # replace with more intuitive arg
-        num_words_sae=len(sae_text.split()), # replace with more intuitive arg
+        num_words_aae=len(aae_text.split()), #
+        num_words_sae=len(sae_text.split()), #
     )
     return pair_edit_data
 

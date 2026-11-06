@@ -3,7 +3,7 @@ import re
 from src.core.utils import AaeFeature
 
 
-### most regexes built with LLM calls and manually tested against datasets, but not extensively yet
+### Regex patterns drafted with LLM assistance and and manually checked against corpus samples
 # model input cleaning
 MENTION_PLACEHOLDER: str = '@user'
 CLEANUP_REPLACEMENT_MAP: dict[int, int | str | None] = str.maketrans({
