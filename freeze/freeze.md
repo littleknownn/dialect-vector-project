@@ -1,7 +1,7 @@
-This file describes the methodology at the time of the code freeze on [Date], and records the analysis as fixed before the testing split is run. See the paper for details about definitions and methodology. All confidence intervals are set to 95%.
+This file describes the methodology at the time of the code freeze on November 6th, 2026, and records the analysis as fixed before the testing split is run. `06_analyze_pairs.py --mode freeze` records a model's freeze before a testing run with a timestamp for that run. This file is committed with all four freeze records after the final testing run. See the paper for details about definitions and methodology. All confidence intervals are set to 95%.
 
 # What is frozen
-*See `freeze/freeze_record.json`, `runs/.../extraction_log.json` for items*
+*See `freeze/<model_name>/freeze_record.json`, `freeze/<model_name>/extraction_log.json` for items*
 - Hashes of all files under `src/core/`, `src/analysis/`, `src/scripts/`
 - The complete experiment configuration setup
 - Hashes of processed corpora, text annotations, difference vectors, and profanity list
@@ -9,7 +9,7 @@ This file describes the methodology at the time of the code freeze on [Date], an
 
 # Setup
 - Model: Llama-3.2-3B base, primary layer 14 of 28 with secondary sweep on 4, 8, 14, 20, 24
-- Vectors extracted from text under either mean pooling, last-token, or boundary pooling (the last token before an aligned word near the middle of the pair)
+- Vectors extracted from text under either mean pooling, last-token, or boundary pooling (the activation of the final token of the aligned word nearest to the midpoint of each line, preferring identical words )
 - A: the mean difference of AAE activations from SAE activations over all REAL-AAE development pairs
 
 # Replication and Robustness
@@ -17,6 +17,7 @@ Replication Models:
 - Llama-3.1-8B base, layer 16 of 32
 - Olmo 3 7B base, layer 16 of 32
 - Gemma 2 2B, layer 13 of 26
+Replications run on CORAAL and REAL-AAE at the primary layer only.
 
 Variant Vectors:
 - $A_\text{no typography}$: $A$ computed only over pairs that get no typography normalization
@@ -116,6 +117,13 @@ Controls:
 - Q2 secondary family: any probe except *ain't*, negative concord, *ain't*, no filter-flagged lines, CORAAL midpoint pooling (activations read at midpoint word, similar to boundary pooling)
 - Q3 levels: orthographic, case and punctuation, lexical, grammatical
 
+# Deviations
+*All deviations finalized before examining affected results*
+- Nov. 7, 2026: remove AAVE lyrics and AAVE social media corpora from Q2 due to provenance concerns: the AAVE corpus has a single curator, little documentation, and has not passed peer review. Recompute primary family FDR results as 3 corpora by 2 poolings (6 tests), and apply the same adjustment to secondary results as well.
+- Nov. 7, 2026: interrupt and restart OLMo 7B freeze step due to compute pod restart.
+- Nov. 8, 2026: Add label-error sensitivity check to regression weight verdicts. Use the hand label check to estimate a weight for content change separate from its skew from being the umbrella category; then verdicts whose CIs include this estimate are not robust to label error (See Appendix B). Verdicts and label rules which were frozen remain unchanged.
+
+
 # Run Order
 - `01_process_corpora.py`
 - `02_annotate_text.py`
@@ -127,5 +135,4 @@ Controls:
 Repeat all except for the first with all replication models using `--model`
 
 # Commit Tag
-- `freeze-[Date]`
-- Commit: [Commit Hash]
+- `freeze-v1`

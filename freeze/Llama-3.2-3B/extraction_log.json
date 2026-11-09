@@ -1,0 +1,315 @@
+{
+    "model_hf_path": "meta-llama/Llama-3.2-3B",
+    "torch_version": "2.5.1+cu124",
+    "transformers_version": "4.57.6",
+    "experiment_config": {
+        "model_hf_path": "meta-llama/Llama-3.2-3B",
+        "attn_implementation": null,
+        "load_in_4bit": false,
+        "bnb_4bit_quant_type": "nf4",
+        "corpus_split_size": 3782,
+        "batch_size": 32,
+        "max_seq_len": 64,
+        "random_seed": 42,
+        "target_layers": [
+            4,
+            8,
+            14,
+            20,
+            24
+        ],
+        "primary_layer": 14,
+        "primary_pooling_type": "boundary",
+        "num_cv_folds": 5,
+        "num_bootstrap_samples": 10000,
+        "p_alpha": 0.05,
+        "q1": {
+            "labeled_bounds": [
+                [
+                    0.9,
+                    1.0
+                ],
+                [
+                    0.7,
+                    0.5
+                ]
+            ],
+            "fdr_vectors": [
+                "",
+                "_aae_minus_aae_back",
+                "_aae_back_minus_sae"
+            ],
+            "layer_sweep_vectors": [
+                ""
+            ],
+            "num_sign_flips": 10000,
+            "num_shuffled_pairings": 1000
+        },
+        "q2": {
+            "primary_corpus_names": [
+                "twitter_aae",
+                "aave_lyrics",
+                "coraal_merged",
+                "real_aae"
+            ],
+            "reported_corpus_names": [
+                "aave_social_media"
+            ],
+            "midpoint_corpus_names": [
+                "coraal_merged"
+            ],
+            "primary_pooling_types": [
+                "mean",
+                "last"
+            ],
+            "num_negatives_per_positive": 5,
+            "num_null_shuffles": 10000,
+            "min_auroc": 0.55,
+            "power": 0.8,
+            "sensitivity_vectors": [
+                "_no_typography",
+                "_same_terminal_punctuation",
+                "_no_profanity"
+            ]
+        },
+        "q3": {
+            "edits_by_count": {
+                "total": [
+                    "orthographic",
+                    "copula_added",
+                    "function_word",
+                    "filter_flagged_word",
+                    "grammar_word",
+                    "added_or_dropped",
+                    "shorthand_function_words",
+                    "shorthand_expanded",
+                    "content_change",
+                    "capitalization",
+                    "punctuation"
+                ],
+                "orthographic": [
+                    "orthographic",
+                    "shorthand_function_words",
+                    "shorthand_expanded"
+                ],
+                "case_and_punctuation": [
+                    "capitalization",
+                    "punctuation"
+                ],
+                "lexical": [
+                    "content_change",
+                    "filter_flagged_word",
+                    "added_or_dropped"
+                ],
+                "grammatical": [
+                    "grammar_word",
+                    "function_word",
+                    "copula_added"
+                ]
+            },
+            "num_dose_bins": 5
+        },
+        "q3_q4_pooling_types": [
+            "boundary",
+            "mean"
+        ],
+        "tagging": {
+            "orthographic_thresholds": [
+                0.75,
+                0.6,
+                0.5
+            ],
+            "respelling_threshold": 0.6,
+            "single_letter_respelling_threshold": 0.7,
+            "aint_words": [
+                "aint",
+                "ain't"
+            ],
+            "function_words": [
+                "the",
+                "a",
+                "an",
+                "is",
+                "are",
+                "was",
+                "were",
+                "be",
+                "been",
+                "am",
+                "do",
+                "does",
+                "did",
+                "has",
+                "have",
+                "had",
+                "to",
+                "of",
+                "in",
+                "on",
+                "at",
+                "for",
+                "and",
+                "but",
+                "that",
+                "it",
+                "they",
+                "he",
+                "she",
+                "we",
+                "you",
+                "i",
+                "not",
+                "no",
+                "with",
+                "it's",
+                "that's",
+                "what",
+                "who",
+                "this",
+                "these",
+                "those",
+                "my",
+                "your",
+                "his",
+                "her",
+                "their",
+                "our"
+            ],
+            "grammar_words": [
+                "ain't",
+                "aint",
+                "be",
+                "done",
+                "finna",
+                "gon",
+                "nothing",
+                "nobody",
+                "nowhere",
+                "none"
+            ],
+            "copula_words": [
+                "is",
+                "are"
+            ]
+        },
+        "q4": {
+            "primary_curves": [
+                "log",
+                "ceiling"
+            ],
+            "format_flags": [
+                "ending_changed",
+                "case_changed",
+                "tag_count_changed",
+                "has_asterisk"
+            ],
+            "regression_settings": [
+                [
+                    0.5,
+                    1.0,
+                    1.5,
+                    2.0,
+                    3.0
+                ],
+                {
+                    "log": [
+                        1.0
+                    ],
+                    "ceiling": [
+                        3.0,
+                        0.0
+                    ],
+                    "straight": [
+                        0.5,
+                        0.5
+                    ],
+                    "free_shape": [
+                        1.0
+                    ]
+                },
+                0.5,
+                0.2
+            ],
+            "min_edits_for_verdict": 30,
+            "num_held_out_folds": 5,
+            "num_calibration_bins": 10,
+            "num_bootstrap_samples": 2000,
+            "num_robustness_bootstrap_samples": 300,
+            "robustness_distance_shift": 1,
+            "marginal_effect_distances": [
+                1,
+                3
+            ]
+        },
+        "debug_max_split_lines": null
+    },
+    "processed_data_hashes": {
+        "aave_lyrics.jsonl": "82c1c963991991ab5048e95dfc35a7fffc0c004647ef5b3f0278a18112a60ead",
+        "aave_social_media.jsonl": "db0aa0e641c007edad774a93a4f34f4cbcc09d084632bdaf32ce155b3895b67a",
+        "coraal_merged.jsonl": "f8a04554650930e176169ee107cc4f29556933e56587d6dece178824eaec67a8",
+        "coraal_merged_pool.jsonl": "935f299b21760a67f67927b548ac924d1a70432c9a8100ad0e4a66f061694676",
+        "coraal_merged_speakers.json": "dd6a8a9ae0b69c56b63f75f6061cd7abdf43a8d4b05f7bf51bdd5f54bcdf1140",
+        "coraal_merged_speakers_pool.json": "e004d42f601374815ce37be0ce4dd8193096dd7bc3ddfa41f0c1c92c35870b13",
+        "processing_log.json": "a730184106f36b65b3ba08e953e0cf2a5b71db262c0b91df936d7c7792ed1c99",
+        "real_aae_aae_back_reserve.jsonl": "9bc9ac8b65880d0b0f990154722e6e1b8957d36f2a5589f4b47fbd41122761f8",
+        "real_aae_aae_back_supervised.jsonl": "a811e982273d8971f12c8f9819e2c5672e935acbfdcf0c9f5a9f226a5c52672d",
+        "real_aae_aae_back_testing.jsonl": "86cfaa50d1a559b0d5623ba1504b23b027ff12a08d12bffe24e1035c7b8d2574",
+        "real_aae_aae_reserve.jsonl": "67fe200166d27ae621d439c25c88be52a2176fd916f462515e2770285ccf3b8f",
+        "real_aae_aae_supervised.jsonl": "05b8c47d7b69620e08bde81f7e4d64cdb956af6f2673317139c24d8cc66d1127",
+        "real_aae_aae_supervised_stripped.jsonl": "fd615e36f2232f1e2709691aa9fe02f013b37e6fd0df8b75863704b94254fcbf",
+        "real_aae_aae_testing.jsonl": "571607c0b4f6a7f5af8a33e7f5c38a28497921737fcb5ff478fb9b321a2dacc0",
+        "real_aae_aae_testing_stripped.jsonl": "59145f255bf0d8c8981c3b196579339dfbc95832c7a968f81557c80f55d704c3",
+        "real_aae_pair_metadata_reserve.json": "dff3b13c1ea82bdec4f2d02d8efb81bb466d1b7fbd75317382fe85f72e1e8f84",
+        "real_aae_pair_metadata_supervised.json": "53a95ecd03a9ae2f84daf3489a539348f2d873aa9ef3b2a0000b52896d8f0b84",
+        "real_aae_pair_metadata_testing.json": "7cefab4a81678833c71af32e4c54e51e8f731c2da229793176ac1c776bffef28",
+        "real_aae_sae_reserve.jsonl": "a5a789941c62a49fc80cb6eaf0aed62e1c965a273e89dd08cd1c3fe8a2656598",
+        "real_aae_sae_supervised.jsonl": "aa178ab9e136a5750e66b7a3827d2df5cbd634ddd2a5ddd5fab03c6cb1e983bf",
+        "real_aae_sae_supervised_stripped.jsonl": "5deda74d72a0c8e7dc124cbfa2bd3ed94578c7b73134cee3c9f4612ad47c9801",
+        "real_aae_sae_testing.jsonl": "93954ef9d4136132d4282f4d859a2d32e8c094d25abee355e2fb4970c04bebe6",
+        "real_aae_sae_testing_stripped.jsonl": "37e7c7c182debbbd04584c540b884dae54271711cfafc0cc5d394db270f41446",
+        "twitter_aae.jsonl": "35f4afc13431eff7cc3a2a0c34f468223350d8b7aa5d3fc5635319fbeb1b30c5",
+        "wikitext.jsonl": "da27de833b8b9184ed8dda72ee3e712a7fcf4ad737b62c1992d296c58c5c51ea"
+    },
+    "num_lines_by_split": {
+        "aave_lyrics": 3782,
+        "aave_social_media": 3782,
+        "coraal_merged": 3782,
+        "coraal_merged_pool": 40000,
+        "real_aae_aae_back_reserve": 9674,
+        "real_aae_aae_back_supervised": 3748,
+        "real_aae_aae_back_testing": 3739,
+        "real_aae_aae_reserve": 9674,
+        "real_aae_aae_supervised": 3748,
+        "real_aae_aae_supervised_stripped": 3748,
+        "real_aae_aae_testing": 3739,
+        "real_aae_aae_testing_stripped": 3739,
+        "real_aae_sae_reserve": 9674,
+        "real_aae_sae_supervised": 3748,
+        "real_aae_sae_supervised_stripped": 3748,
+        "real_aae_sae_testing": 3739,
+        "real_aae_sae_testing_stripped": 3739,
+        "twitter_aae": 3782,
+        "wikitext": 3782
+    },
+    "num_truncated_lines_by_split": {
+        "aave_lyrics": 0,
+        "aave_social_media": 79,
+        "coraal_merged": 0,
+        "coraal_merged_pool": 0,
+        "real_aae_aae_back_reserve": 0,
+        "real_aae_aae_back_supervised": 0,
+        "real_aae_aae_back_testing": 0,
+        "real_aae_aae_reserve": 15,
+        "real_aae_aae_supervised": 9,
+        "real_aae_aae_supervised_stripped": 9,
+        "real_aae_aae_testing": 9,
+        "real_aae_aae_testing_stripped": 9,
+        "real_aae_sae_reserve": 0,
+        "real_aae_sae_supervised": 0,
+        "real_aae_sae_supervised_stripped": 0,
+        "real_aae_sae_testing": 0,
+        "real_aae_sae_testing_stripped": 0,
+        "twitter_aae": 0,
+        "wikitext": 5
+    }
+}

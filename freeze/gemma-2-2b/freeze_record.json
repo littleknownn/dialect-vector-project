@@ -1,0 +1,397 @@
+{
+    "source_code_hashes": {
+        "__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "base_model.py": "0eceb215feaf3e7b7d70cae28b15a7a31a25f14f91aa48320d8b1cc9589669ae",
+        "config.py": "3939cb4ab1fdfd7f0b9a2495f0df925f596dc316cd21a4fe7b849e9730afdf93",
+        "config_utils.py": "62a9520de642e5c45b70d5ee50d6afe5fb3f3b727ad426252d7029cfe23b6f6c",
+        "data_provenance.py": "51797da095339176e5cec33f223247e8eee4615d4a0397ddc8694f23b9bd64b6",
+        "edit_regression.py": "ece07e207355a6d0c4e1f10ca1bf3537ff85f6efd8f4f5a09c6cb83ce4c66a2b",
+        "edit_tagger.py": "32484d27fa0f0196302f83e327d5f5b34e29f801ce6f12d519e1976976ac0fac",
+        "matched_auroc.py": "8c3620e8ffbbb86b0c602d39ce62cdc25e35cc1d0c159664761aa457b6d8e018",
+        "math_utils.py": "7bcdae24875b73e61414a8ab95faeafb6bf4e4d49199a882aa43c0118966271e",
+        "paths.py": "b9551ef0fdf9e087d01be9b29a2a98551b09ebc090a4d25c93c94d4215e97540",
+        "stats_utils.py": "44fbb99db08ced2fb2c39bfbecaf85681540eda0aa8f8969d46e984a82403be6",
+        "text_rules.py": "151b455d8d56f1dd26eddbf432eec6db13486ccb4b27fcbcf8689f552b2699f1",
+        "text_utils.py": "ae7210515ff68c9d5694ee167c916207b07335f44b0b6830b1d0984df99c5fc9",
+        "utils.py": "0eed68beda2d247f87b6ed59720d3a5b2e60cd5be54de2a0c649b51048486a3f",
+        "pair_data.py": "bdb50a377494051374116fee7fecfcdb9b7054d6aa311ee22ad1df9537cd78cd",
+        "q1.py": "ebaca8c5718399f459ac8543ad0fa28c6662174cd7a6c06dd48f37c2d36a6dac",
+        "q2.py": "d71e68a02f553d132ee0e1d59bbc0461a2b58764ed39aad60d7c8b55cdac1df5",
+        "q3.py": "145b0be155db2106f6f380137a7e0b20de04eed4fa540b2264606dce52b57107",
+        "q4.py": "439a5ad0f9e4c1ddb7a8615f0a00f6336cf0e09a6e58d83bbf07ef44d1ebfd42",
+        "q4_robustness.py": "b8025a90a128b0590aaecdd196645d91728365d3e7be1e9f4a7cdb55bb818f6d",
+        "01_process_corpora.py": "14a7b199d84afc17818a9f4dcc4ca83716632df36aec8bb465d67440abb50f6b",
+        "02_annotate_text.py": "4f3c0e1921c30569a76236de659a21981b59ff5be1f8644fb43c5ce31889c239",
+        "03_extract_activations.py": "75ba7db005a3c2e163170b2697e4708ddefe458584f15c78ee508d19cf7d0095",
+        "04_compute_estimators.py": "b6fde3fcfdd0be4a6e3bade91d5cd0a5310df0560896034a72bc960a27033efd",
+        "06_analyze_pairs.py": "2252c5ebbfac028066d7672b183665aad2de681ee5c31ddfaa06c4b7599ed340",
+        "07_analyze_transfer.py": "6bf64ff8ba1e78d68a32a81993a6f020ef3ef91b070077ba0139c92337abaa6d"
+    },
+    "experiment_config": {
+        "model_hf_path": "google/gemma-2-2b",
+        "attn_implementation": "eager",
+        "load_in_4bit": false,
+        "bnb_4bit_quant_type": "nf4",
+        "corpus_split_size": 3782,
+        "batch_size": 32,
+        "max_seq_len": 64,
+        "random_seed": 42,
+        "target_layers": [
+            13
+        ],
+        "primary_layer": 13,
+        "primary_pooling_type": "boundary",
+        "num_cv_folds": 5,
+        "num_bootstrap_samples": 10000,
+        "p_alpha": 0.05,
+        "q1": {
+            "labeled_bounds": [
+                [
+                    0.9,
+                    1.0
+                ],
+                [
+                    0.7,
+                    0.5
+                ]
+            ],
+            "fdr_vectors": [
+                "",
+                "_aae_minus_aae_back",
+                "_aae_back_minus_sae"
+            ],
+            "layer_sweep_vectors": [
+                ""
+            ],
+            "num_sign_flips": 10000,
+            "num_shuffled_pairings": 1000
+        },
+        "q2": {
+            "primary_corpus_names": [
+                "coraal_merged",
+                "real_aae"
+            ],
+            "reported_corpus_names": [],
+            "midpoint_corpus_names": [
+                "coraal_merged"
+            ],
+            "primary_pooling_types": [
+                "mean",
+                "last"
+            ],
+            "num_negatives_per_positive": 5,
+            "num_null_shuffles": 10000,
+            "min_auroc": 0.55,
+            "power": 0.8,
+            "sensitivity_vectors": [
+                "_no_typography",
+                "_same_terminal_punctuation",
+                "_no_profanity"
+            ]
+        },
+        "q3": {
+            "edits_by_count": {
+                "total": [
+                    "orthographic",
+                    "copula_added",
+                    "function_word",
+                    "filter_flagged_word",
+                    "grammar_word",
+                    "added_or_dropped",
+                    "shorthand_function_words",
+                    "shorthand_expanded",
+                    "content_change",
+                    "capitalization",
+                    "punctuation"
+                ],
+                "orthographic": [
+                    "orthographic",
+                    "shorthand_function_words",
+                    "shorthand_expanded"
+                ],
+                "case_and_punctuation": [
+                    "capitalization",
+                    "punctuation"
+                ],
+                "lexical": [
+                    "content_change",
+                    "filter_flagged_word",
+                    "added_or_dropped"
+                ],
+                "grammatical": [
+                    "grammar_word",
+                    "function_word",
+                    "copula_added"
+                ]
+            },
+            "num_dose_bins": 5
+        },
+        "q3_q4_pooling_types": [
+            "boundary",
+            "mean"
+        ],
+        "tagging": {
+            "orthographic_thresholds": [
+                0.75,
+                0.6,
+                0.5
+            ],
+            "respelling_threshold": 0.6,
+            "single_letter_respelling_threshold": 0.7,
+            "aint_words": [
+                "aint",
+                "ain't"
+            ],
+            "function_words": [
+                "the",
+                "a",
+                "an",
+                "is",
+                "are",
+                "was",
+                "were",
+                "be",
+                "been",
+                "am",
+                "do",
+                "does",
+                "did",
+                "has",
+                "have",
+                "had",
+                "to",
+                "of",
+                "in",
+                "on",
+                "at",
+                "for",
+                "and",
+                "but",
+                "that",
+                "it",
+                "they",
+                "he",
+                "she",
+                "we",
+                "you",
+                "i",
+                "not",
+                "no",
+                "with",
+                "it's",
+                "that's",
+                "what",
+                "who",
+                "this",
+                "these",
+                "those",
+                "my",
+                "your",
+                "his",
+                "her",
+                "their",
+                "our"
+            ],
+            "grammar_words": [
+                "ain't",
+                "aint",
+                "be",
+                "done",
+                "finna",
+                "gon",
+                "nothing",
+                "nobody",
+                "nowhere",
+                "none"
+            ],
+            "copula_words": [
+                "is",
+                "are"
+            ]
+        },
+        "q4": {
+            "primary_curves": [
+                "log",
+                "ceiling"
+            ],
+            "format_flags": [
+                "ending_changed",
+                "case_changed",
+                "tag_count_changed",
+                "has_asterisk"
+            ],
+            "regression_settings": [
+                [
+                    0.5,
+                    1.0,
+                    1.5,
+                    2.0,
+                    3.0
+                ],
+                {
+                    "log": [
+                        1.0
+                    ],
+                    "ceiling": [
+                        3.0,
+                        0.0
+                    ],
+                    "straight": [
+                        0.5,
+                        0.5
+                    ],
+                    "free_shape": [
+                        1.0
+                    ]
+                },
+                0.5,
+                0.2
+            ],
+            "min_edits_for_verdict": 30,
+            "num_held_out_folds": 5,
+            "num_calibration_bins": 10,
+            "num_bootstrap_samples": 2000,
+            "num_robustness_bootstrap_samples": 300,
+            "robustness_distance_shift": 1,
+            "marginal_effect_distances": [
+                1,
+                3
+            ]
+        },
+        "debug_max_split_lines": null
+    },
+    "processed_data_hashes": {
+        "aave_lyrics.jsonl": "82c1c963991991ab5048e95dfc35a7fffc0c004647ef5b3f0278a18112a60ead",
+        "aave_social_media.jsonl": "db0aa0e641c007edad774a93a4f34f4cbcc09d084632bdaf32ce155b3895b67a",
+        "coraal_merged.jsonl": "f8a04554650930e176169ee107cc4f29556933e56587d6dece178824eaec67a8",
+        "coraal_merged_pool.jsonl": "935f299b21760a67f67927b548ac924d1a70432c9a8100ad0e4a66f061694676",
+        "coraal_merged_speakers.json": "dd6a8a9ae0b69c56b63f75f6061cd7abdf43a8d4b05f7bf51bdd5f54bcdf1140",
+        "coraal_merged_speakers_pool.json": "e004d42f601374815ce37be0ce4dd8193096dd7bc3ddfa41f0c1c92c35870b13",
+        "processing_log.json": "a730184106f36b65b3ba08e953e0cf2a5b71db262c0b91df936d7c7792ed1c99",
+        "real_aae_aae_back_reserve.jsonl": "9bc9ac8b65880d0b0f990154722e6e1b8957d36f2a5589f4b47fbd41122761f8",
+        "real_aae_aae_back_supervised.jsonl": "a811e982273d8971f12c8f9819e2c5672e935acbfdcf0c9f5a9f226a5c52672d",
+        "real_aae_aae_back_testing.jsonl": "86cfaa50d1a559b0d5623ba1504b23b027ff12a08d12bffe24e1035c7b8d2574",
+        "real_aae_aae_reserve.jsonl": "67fe200166d27ae621d439c25c88be52a2176fd916f462515e2770285ccf3b8f",
+        "real_aae_aae_supervised.jsonl": "05b8c47d7b69620e08bde81f7e4d64cdb956af6f2673317139c24d8cc66d1127",
+        "real_aae_aae_supervised_stripped.jsonl": "fd615e36f2232f1e2709691aa9fe02f013b37e6fd0df8b75863704b94254fcbf",
+        "real_aae_aae_testing.jsonl": "571607c0b4f6a7f5af8a33e7f5c38a28497921737fcb5ff478fb9b321a2dacc0",
+        "real_aae_aae_testing_stripped.jsonl": "59145f255bf0d8c8981c3b196579339dfbc95832c7a968f81557c80f55d704c3",
+        "real_aae_pair_metadata_reserve.json": "dff3b13c1ea82bdec4f2d02d8efb81bb466d1b7fbd75317382fe85f72e1e8f84",
+        "real_aae_pair_metadata_supervised.json": "53a95ecd03a9ae2f84daf3489a539348f2d873aa9ef3b2a0000b52896d8f0b84",
+        "real_aae_pair_metadata_testing.json": "7cefab4a81678833c71af32e4c54e51e8f731c2da229793176ac1c776bffef28",
+        "real_aae_sae_reserve.jsonl": "a5a789941c62a49fc80cb6eaf0aed62e1c965a273e89dd08cd1c3fe8a2656598",
+        "real_aae_sae_supervised.jsonl": "aa178ab9e136a5750e66b7a3827d2df5cbd634ddd2a5ddd5fab03c6cb1e983bf",
+        "real_aae_sae_supervised_stripped.jsonl": "5deda74d72a0c8e7dc124cbfa2bd3ed94578c7b73134cee3c9f4612ad47c9801",
+        "real_aae_sae_testing.jsonl": "93954ef9d4136132d4282f4d859a2d32e8c094d25abee355e2fb4970c04bebe6",
+        "real_aae_sae_testing_stripped.jsonl": "37e7c7c182debbbd04584c540b884dae54271711cfafc0cc5d394db270f41446",
+        "twitter_aae.jsonl": "35f4afc13431eff7cc3a2a0c34f468223350d8b7aa5d3fc5635319fbeb1b30c5",
+        "wikitext.jsonl": "da27de833b8b9184ed8dda72ee3e712a7fcf4ad737b62c1992d296c58c5c51ea"
+    },
+    "frozen_input_hashes": {
+        "text_annotations": {
+            "aave_lyrics.json": "1b2d22ceadbc2ea84c01dbd26112de869c6690e24f3d48b4ac7942488f392bdf",
+            "aave_social_media.json": "31c71a846766e41a8ac43e274e5fa227df81d3a08d68cf458e1f91948758b1a6",
+            "coraal_merged.json": "eb2bd6c6a8be74b74ec8691cdf9fdd38ab04d76765172b6a9d004a47f79562c2",
+            "coraal_merged_pool.json": "a579afc5003f4eb69ab08f7d1ee7a65cffb5a5ac7d737e08daf7c9634398a0bf",
+            "real_aae_aae_back_reserve.json": "a64bcf44a66e7b429f0d917ec6d20671d1f063d00f7edbc5620a151f1c804dc1",
+            "real_aae_aae_back_supervised.json": "6fe3a05da62bf86a1c75f6d03f65a914597e05c1a3190b3fae0b38d8a4c41967",
+            "real_aae_aae_back_testing.json": "8c25d0b1ad48a0937c5526a69298c6a5329990b6e3c5ce407593b5612595247a",
+            "real_aae_aae_reserve.json": "4683caae6b44350b88e625279605d1e79c1c45765ba3418172b7a0e344a42402",
+            "real_aae_aae_supervised.json": "298c79e9faadb2f41a3ab6db9c3eb450daeaa56e36f5adaf7a25311a60333234",
+            "real_aae_aae_supervised_stripped.json": "51686f2c9e37ee0216cdf3a4ed5c6b3d431b762a16d53d30b6c425f9502a6edd",
+            "real_aae_aae_testing.json": "17cdc0053f03ca1de1fce1e398406e9ce7b27fcf4eaaf8b2665698da56860396",
+            "real_aae_aae_testing_stripped.json": "224696ea1f06a0f251d7f863de9cfd4cf2eb316dd00776aec38c9ee3dfc371f1",
+            "real_aae_pair_annotations_reserve.json": "9de9dd381a90a68a8c65e23f2857a00ad845e2e67a690bc589df833e5e446498",
+            "real_aae_pair_annotations_supervised.json": "0b6a1f2b36e65c7479b03b53e88209e2eccabd3bec0b38e4e23cdbbd11027468",
+            "real_aae_pair_annotations_testing.json": "0545f20b00770cf8f37de8cfec2d556451d0b45fef43f196b8147300d6860883",
+            "real_aae_sae_reserve.json": "0d3d6e3cd54008f2119c75d9a333b9009371364c9a0fca413c6765450bab4105",
+            "real_aae_sae_supervised.json": "5848d338e47afd68f6d24c6f194e0451c5969d455800e9389384bb68ec7f2043",
+            "real_aae_sae_supervised_stripped.json": "5fb886d06e385037525b9e277657ed002bc6129112238fc5a9b57c8e3b29ffe7",
+            "real_aae_sae_testing.json": "d54f574a603560e4f97277dabc002f4ca94703c2db4cf0cba43718da784ce94b",
+            "real_aae_sae_testing_stripped.json": "7715725933aee8d405f3227c1c3ccdd1215b3d0d3aa422b160518b45faea6452",
+            "twitter_aae.json": "4b75d3c84abeeaf1552a04fe83e59a832637c294c8bca797ee1e34e1c21f0c9b",
+            "wikitext.json": "ed7f2b47f22604a53c100d255a5652f9f02ad67ff9bdfcbd1909813c8c81e611"
+        },
+        "estimators": {
+            "layer13_boundary/real_aae.pt": "6f887057ffc47944d5552a2ec558031a472d8912d9c58beed6c8376daba6c1ce",
+            "layer13_boundary/real_aae_aae_back_minus_sae.pt": "7079ba10a5678290bb0ca6f5816da3631ea59011891d0928f1396367e75860be",
+            "layer13_boundary/real_aae_aae_minus_aae_back.pt": "196f0a45c1e885dc5e464b74ac67e4d46f8683d7b9ed63be983352bba14bfe31",
+            "layer13_boundary/real_aae_no_profanity.pt": "7304dc1de7dd941d3b2cd8d879d216a6701956be55a5357ce8d7a0dd779106e8",
+            "layer13_boundary/real_aae_no_typography.pt": "3bb00503b7802643ac1348c691235aa7b971ddd6d7f84e83afa03c6f56a71765",
+            "layer13_boundary/real_aae_same_terminal_punctuation.pt": "516b6c06eb9783d6aa336565daac196290697d1e20a1d057faedf5f9f001e1db",
+            "layer13_last/real_aae.pt": "2890f227ea774186ebe58d5b21ccf543744a79ec6b1d638e028015ab1cd8f1f6",
+            "layer13_last/real_aae_aae_back_minus_sae.pt": "eaca790d2bdee4e348ad46564cdb15631a5bb6a89453f87f2b6c1ae2607aa6ad",
+            "layer13_last/real_aae_aae_minus_aae_back.pt": "eea209a46cc94ebdda9d7a0a28f6083f8eaa26a18338585943306325fd1d2522",
+            "layer13_last/real_aae_no_profanity.pt": "1bc075c8e947b0ca296c1dd0c47f477fadc2997f9965064eae2b26460dc37886",
+            "layer13_last/real_aae_no_typography.pt": "4a196f15cd5503dc1efe8ef9c309f14da4eda1187b8d5c25b775ed95640afc55",
+            "layer13_last/real_aae_same_terminal_punctuation.pt": "02e9577ee5cdda109bdb2314dbc677507fd9bc50dd8b45ec1dc57eaa6e614fc2",
+            "layer13_mean/real_aae.pt": "74f852311ce4709da5e1cdebacbfb1d9b0dae30ba3660527f60b476e9e12fca9",
+            "layer13_mean/real_aae_aae_back_minus_sae.pt": "63faaf5dd64dec8d6dd58d5118d8fe5ee2e4b07274a975f13b661498e06ffe5e",
+            "layer13_mean/real_aae_aae_minus_aae_back.pt": "490e3170ee22fb13fd3548310625a1672f43065bda7818b1bdb49b7625c7b5c3",
+            "layer13_mean/real_aae_no_profanity.pt": "f890f5cbc4b579e796b2bb69a9c0641874c12d3fa95df6fade69c9ea4d4df672",
+            "layer13_mean/real_aae_no_typography.pt": "84278ae1ad033108e112bc51795b269284995372e86dfc57ef0a4323d5bb3f9a",
+            "layer13_mean/real_aae_same_terminal_punctuation.pt": "295e5f9b0cd00dd132a4260a2269cb9e5be21aa6e9cd40ec8a5cc270471c8277",
+            "fold_ids_real_aae_supervised.pt": "df75c473c7164a6204427d49e156a88d7954d2e1dfae2417e1f592e1b423b8ac",
+            "fold_ids_real_aae_testing.pt": "4203fc0550bac6a63a35b1f7ac46b89af7f12999533e00d8c96223c6e4f87f36",
+            "layer13_boundary/real_aae_aae_back_minus_sae_supervised.pt": "f25039e80bb029517134a7de0eb7b7fa4a06294390e1ef0616ca3920ad475ec9",
+            "layer13_boundary/real_aae_aae_back_minus_sae_testing.pt": "b2d5e12f499ff4d09c28af9468da38f0f8f687e78b5787c5e00f6dd8b8109c46",
+            "layer13_boundary/real_aae_aae_minus_aae_back_supervised.pt": "b40ed978f7bc35e763496e4b00b0098d11f6f3ef256dfd3fb7a15e921b0a0f28",
+            "layer13_boundary/real_aae_aae_minus_aae_back_testing.pt": "3da05cd56317d4375fe97ad9f73bd9935097cd8fb49219c3308f0f58e68a8c2c",
+            "layer13_boundary/real_aae_no_profanity_supervised.pt": "fde02282267d50486da673589d8cf3d76bb34e0db0ed196b9167b1f5c20f72a2",
+            "layer13_boundary/real_aae_no_profanity_testing.pt": "71a9833488627792ab4dc34eb5edf6cd1eeb944b2a7ed6004ffb41f1ebf33885",
+            "layer13_boundary/real_aae_no_typography_supervised.pt": "2e1c94f45cc47b8a6adfa507505a3e961eb2cc7059075834ba5d9c092078462c",
+            "layer13_boundary/real_aae_no_typography_testing.pt": "5244adbf2b2570de3353378f954930c031052fd4739510aa136eee86e227f9af",
+            "layer13_boundary/real_aae_same_terminal_punctuation_supervised.pt": "181cc89a6d29630628c2db62ccad7e36d0570764689992321fb90e1d4f68f93d",
+            "layer13_boundary/real_aae_same_terminal_punctuation_testing.pt": "3f6cf65724d69475953c588f4c029eb0d49eabd940e12ba020590710f43b7cda",
+            "layer13_boundary/real_aae_supervised.pt": "a3d8262a941da6990fa3c3bc28c298e65302413b787e3ec0af6bd15cee6a8924",
+            "layer13_boundary/real_aae_testing.pt": "f6e7fb5d6e963630ba57905af7eec591b65aa95675566f1af54478013e5e1b5b",
+            "layer13_last/real_aae_aae_back_minus_sae_supervised.pt": "f6595a9a944b3290d101abc96ede7bddc094fbab9413695b94b90734fc283d02",
+            "layer13_last/real_aae_aae_back_minus_sae_testing.pt": "aee29c0fb6c9ea0c3b96847f6c2e04e0e14d47887c079bf3e22671deaa15a2e5",
+            "layer13_last/real_aae_aae_minus_aae_back_supervised.pt": "bf8d6b2c30086bb972a78d5866371cbc13f8cef0cce53229a02ead8ecaccd8a5",
+            "layer13_last/real_aae_aae_minus_aae_back_testing.pt": "2ff217be7d3a79ef9b2ad69a0a239b4eac4e62bd92b9b945026ae20da37b91b1",
+            "layer13_last/real_aae_no_profanity_supervised.pt": "3cc31f7f992aa9ee31a7e94540f0c14f613116a1970a7abcde287dd99790cfe7",
+            "layer13_last/real_aae_no_profanity_testing.pt": "ee6db96c0e431b2a6fc24807ea9979b7817dc5db4ff4b79bdd184d04fc112fa9",
+            "layer13_last/real_aae_no_typography_supervised.pt": "16bd69f86e1e28b0c2260a4a42a6e458e36938c5223ea6fc4034c806ee726ef9",
+            "layer13_last/real_aae_no_typography_testing.pt": "71dbf4b55531cee18f40ebcf4ab336340602207f10815fd892f8d9bee15032b6",
+            "layer13_last/real_aae_same_terminal_punctuation_supervised.pt": "533c93b0f9137fc8a39eaf878b58d3bf678bcd46a780457bc541908bc1078033",
+            "layer13_last/real_aae_same_terminal_punctuation_testing.pt": "8cb26e5be83ed9d39319459ad13cb548340bb6a291780a4df9429afbd6753609",
+            "layer13_last/real_aae_supervised.pt": "4b938427e734f362830fd6329993fcb670876e7f3a0193df2fab2b059c341e64",
+            "layer13_last/real_aae_testing.pt": "1e4bd7e3b3f623d357ee523611332a1ab1be22df6b1dc6d950f20780b12e5912",
+            "layer13_mean/real_aae_aae_back_minus_sae_supervised.pt": "557748d01305dff0e695775787fe2ab0e76f72450d266712c54a9b778ed3d59f",
+            "layer13_mean/real_aae_aae_back_minus_sae_testing.pt": "f18f124afc20721f1d6f67ab1e57f83a4767bb972c76004be82daef753761469",
+            "layer13_mean/real_aae_aae_minus_aae_back_supervised.pt": "f0cf5154cee831dda389daa750ad908b5ebf90a434a8eca5000bdf166ee00e02",
+            "layer13_mean/real_aae_aae_minus_aae_back_testing.pt": "ded05d22946ca4951b1813a410b73cd6cd049743eafe666becce048170f800fb",
+            "layer13_mean/real_aae_no_profanity_supervised.pt": "b19e5736f676976bd4fd3d78a7b11ea5799d787f56a7116c2eeb9ee3a0779b24",
+            "layer13_mean/real_aae_no_profanity_testing.pt": "100b5a42d4b19826c8530c8938019599a8d3c39dca305550383b22077a862f94",
+            "layer13_mean/real_aae_no_typography_supervised.pt": "0e77042170e283901c14839622a7511b7ace5368bebb34db9859e89197151ea1",
+            "layer13_mean/real_aae_no_typography_testing.pt": "2f948f64ae7e2297bb6ac153189a43fbbfdf8c332ee9ce521823991bd4ffd703",
+            "layer13_mean/real_aae_same_terminal_punctuation_supervised.pt": "a1d07270280edc47b5e4abd10de0b7f94ca9ec3c143b54508efc5ba7af8e139f",
+            "layer13_mean/real_aae_same_terminal_punctuation_testing.pt": "b61feb70ab475222bb44672b453034f386ccb3ab53808f9c9a2bc02b513682b4",
+            "layer13_mean/real_aae_supervised.pt": "7aec3d9c62db122dd39fe39645385ba5218d5b2bfe6fb2de16e293c140ad43d0",
+            "layer13_mean/real_aae_testing.pt": "322b5107df443c5125e357f74afc8ec6d023f8ed6ae896a537c724fa231cc248"
+        },
+        "profanity_list": "af851ecef1d5f212caba17339b12ac39cc2fef7d78c74876f67237644fcee8bd"
+    },
+    "declared_model_specs": {
+        "llama_3b": {
+            "model_hf_path": "meta-llama/Llama-3.2-3B",
+            "primary_layer": 14,
+            "attn_implementation": null
+        },
+        "llama_8b": {
+            "model_hf_path": "meta-llama/Llama-3.1-8B",
+            "primary_layer": 16,
+            "attn_implementation": null
+        },
+        "olmo_7b": {
+            "model_hf_path": "allenai/Olmo-3-1025-7B",
+            "primary_layer": 16,
+            "attn_implementation": null
+        },
+        "gemma_2b": {
+            "model_hf_path": "google/gemma-2-2b",
+            "primary_layer": 13,
+            "attn_implementation": "eager"
+        }
+    }
+}
